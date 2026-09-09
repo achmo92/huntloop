@@ -1,0 +1,51 @@
+[
+  {
+    "categories": {
+      "commitment": "Permanent",
+      "department": "Engineering",
+      "location": "London",
+      "team": "Experience",
+      "allLocations": [
+        "London",
+        "Stockholm"
+      ]
+    },
+    "createdAt": 1782214185805,
+    "descriptionPlain": "We design Spotify\u2019s consumer experience\u2014end to end, moment to moment, across every screen, platform, and partner integration. Our mission is to make listening feel effortless, personal, and joyful for billions of users around the world. That means turning complexity into clarity across hundreds of touchpoints\u2014from our mobile and desktop apps to the smart speakers, TVs, cars, and integrations where Spotify shows up every day. If it touches a consumer, we shape it. We bring deep insight into human behavior, design, and technology to craft experiences that feel intuitive, expressive, and unmistakably Spotify.\nThe Stream Reporting team is responsible for capturing and processing the consumption signals that power some of Spotify\u2019s most important experiences and business functions. Our systems help ensure accurate royalty reporting, support experimentation and analytics, and provide trusted data that informs recommendations and personalization across Spotify.\nWe\u2019re looking for an Android Engineer to join a highly collaborative team working at the intersection of mobile development, data, and platform systems. This is an opportunity to build software that operates at Spotify scale and helps power experiences used by millions of listeners every day. You\u2019ll help shape how listening and engagement signals are captured across Spotify\u2019s mobile experiences and transformed into trusted datasets used throughout the company.\n\u00a0\n",
+    "description": "<div>\n<p>We design Spotify\u2019s consumer experience\u2014end to end, moment to moment, across every screen, platform, and partner integration. Our mission is to make listening feel effortless, personal, and joyful for billions of users around the world. That means turning complexity into clarity across hundreds of touchpoints\u2014from our mobile and desktop apps to the smart speakers, TVs, cars, and integrations where Spotify shows up every day. If it touches a consumer, we shape it. We bring deep insight into human behavior, design, and technology to craft experiences that feel intuitive, expressive, and unmistakably Spotify.</p>\n<p>The Stream Reporting team is responsible for capturing and processing the consumption signals that power some of Spotify\u2019s most important experiences and business functions. Our systems help ensure accurate royalty reporting, support experimentation and analytics, and provide trusted data that informs recommendations and personalization across Spotify.</p>\n<p>We\u2019re looking for an Android Engineer to join a highly collaborative team working at the intersection of mobile development, data, and platform systems. This is an opportunity to build software that operates at Spotify scale and helps power experiences used by millions of listeners every day. You\u2019ll help shape how listening and engagement signals are captured across Spotify\u2019s mobile experiences and transformed into trusted datasets used throughout the company.</p>\n<div>&nbsp;</div>\n</div>",
+    "country": "GB",
+    "workplaceType": "hybrid"
+  },
+  {
+    "categories": {
+      "commitment": "Short Term",
+      "department": "Content",
+      "location": "Ho Chi Minh",
+      "team": "Music Business",
+      "allLocations": [
+        "Ho Chi Minh"
+      ]
+    },
+    "createdAt": 1787802187805,
+    "descriptionPlain": "Spotify is looking for a short-term contractor for the Artist & Label Partnerships team in Vietnam.\u00a0\nThe Artist & Label Partnerships team are the face of Spotify to artists, managers, labels & distributors. Focusing on the Vietnamese music landscape, this role will serve as the point of contact for record labels, distributors and artists, ensuring that artists & their teams are familiar with Spotify standard methodologies, resources and tools. The role will closely support the cross-functional teams with on-platform promotion and off-platform artist marketing. \n\nPlease note this is a fixed-term, 6 months, contractor role hired through a third party.\n",
+    "description": "<div>\n<p>Spotify is looking for a short-term contractor for the Artist &amp; Label Partnerships team in Vietnam.&nbsp;</p>\n<p>The Artist &amp; Label Partnerships team are the face of Spotify to artists, managers, labels &amp; distributors. Focusing on the Vietnamese music landscape, this role will serve as the point of contact for record labels, distributors and artists, ensuring that artists &amp; their teams are familiar with Spotify standard methodologies, resources and tools. The role will closely support the cross-functional teams with on-platform promotion and off-platform artist marketing. <br><br></p>\n<p>Please note this is a fixed-term, 6 months, contractor role hired through a third party.</p>\n</div>",
+    "country": "VN",
+    "workplaceType": "hybrid"
+  },
+  {
+    "categories": {
+      "commitment": "Permanent",
+      "department": "Content",
+      "location": "Dubai",
+      "team": "Music Business",
+      "allLocations": [
+        "Dubai"
+      ]
+    },
+    "createdAt": 1786555138306,
+    "descriptionPlain": "",
+    "description": "<div>\n<p>The Music Mission team owns Spotify\u2019s end to end proposition for music creators and the experiences they create for fans. The team is dedicated to building tools and services to enable creation, promotion, expression, and monetization at scale.</p>\n<p>We\u2019re looking for a strategic-minded, execution-oriented Artist &amp; Label Partnerships Manager for the Maghreb region, covering Morocco, Algeria, and Tunisia. You\u2019ll join Spotify\u2019s Music team in the Middle East, North Africa, Turkey &amp; Pakistan (MENAT+) region and report to the regional Head of Music.</p>\n<p>You\u2019ll sit at the heart of the music ecosystem, moving between high-level release strategies and the day-to-day work that drives artist and business growth. You\u2019ll build trusted relationships across the industry, bring deep knowledge of the Maghreb music landscape to Spotify, and help artists and partners make the most of our platform. Your work will strengthen Spotify\u2019s role as a trusted, culturally relevant voice across the Maghreb.</p>\n</div>",
+    "country": "AE",
+    "workplaceType": "onsite"
+  }
+]

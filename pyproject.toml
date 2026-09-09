@@ -12,7 +12,19 @@ dependencies = [
     "alembic==1.19.2",
     "cryptography==50.0.1",
     "python-dotenv==1.2.3",
+    "langgraph==1.2.11",
+    "langchain-core==1.6.2",
+    "pydantic==2.13.5",
+    "openai==3.10.0",
+    "httpx==0.28.1",
+    "tenacity==9.1.4",
+    "pycountry==26.2.16",
+    "playwright==1.62.0",
+    "PyYAML==6.0.3",
 ]
+
+[project.scripts]
+huntloop = "huntloop.cli.main:main"
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]==3.3.5"]
@@ -32,6 +44,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "postgres: requires a live Postgres container via testcontainers (needs local Docker)",
+    "live: hits a real external endpoint; deselected by default via -m 'not live'",
 ]
 filterwarnings = [
     "error::DeprecationWarning:huntloop.*",

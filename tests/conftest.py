@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -132,3 +133,28 @@ def portable_engine(request, main_db_path):
         finally:
             Base.metadata.drop_all(engine)
             engine.dispose()
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+def _read_fixture(subdir: str, name: str, suffix: str) -> str:
+    path = FIXTURES_DIR / subdir / f"{name}{suffix}"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Recorded fixture {path} is missing. Fixtures are committed to the repo "
+            "and must never be fetched live at test time (02-VALIDATION.md Wave 0)."
+        )
+    return path.read_text(encoding="utf-8")
+
+@pytest.fixture
+def ats_fixture():
+    """Load a recorded ATS JSON response by stem, e.g. ats_fixture('lever_empty')."""
+    def _load(name: str):
+        return json.loads(_read_fixture("ats", name, ".json"))
+    return _load
+
+@pytest.fixture
+def html_fixture():
+    """Load a recorded careers-page HTML document by stem."""
+    def _load(name: str) -> str:
+        return _read_fixture("html", name, ".html")
+    return _load

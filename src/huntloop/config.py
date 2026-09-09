@@ -26,6 +26,25 @@ class Config:
     database_url: str
     credentials_database_url: str
     secret_key: str
+    openai_base_url: str
+    triage_model: str
+    scoring_model: str
+    extraction_model: str
+    max_employer_concurrency: int
+    stale_after_empty_runs: int
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer. Got: {raw!r}") from exc
+    if value < 1:
+        raise ConfigError(f"{name} must be >= 1. Got: {value}")
+    return value
 
 
 def load_config() -> Config:
@@ -76,14 +95,65 @@ def load_config() -> Config:
     except (ValueError, TypeError) as exc:
         raise ConfigError(f"HUNTLOOP_SECRET_KEY is not a valid Fernet key: {exc}") from exc
 
+    openai_base_url = os.environ.get("HUNTLOOP_OPENAI_BASE_URL")
+    if openai_base_url is None:
+        openai_base_url = "https://api.openai.com/v1"
+    openai_base_url = openai_base_url.strip()
+    if not openai_base_url:
+        raise ConfigError(
+            "HUNTLOOP_OPENAI_BASE_URL was set but empty. Unset it to use the "
+            "default https://api.openai.com/v1, or set a full base URL."
+        )
+    if not openai_base_url.startswith(("http://", "https://")):
+        raise ConfigError(
+            "HUNTLOOP_OPENAI_BASE_URL must be an http:// or https:// URL — all "
+            "model access in HuntLoop routes through one OpenAI-compatible "
+            f"endpoint (OPS-06). Got: {openai_base_url!r}"
+        )
+
+    triage_model = os.environ.get("HUNTLOOP_TRIAGE_MODEL") or "gpt-4o-mini"
+    scoring_model = os.environ.get("HUNTLOOP_SCORING_MODEL") or "gpt-4o"
+    extraction_model = os.environ.get("HUNTLOOP_EXTRACTION_MODEL") or triage_model
+
+    max_employer_concurrency = _positive_int_env("HUNTLOOP_MAX_EMPLOYER_CONCURRENCY", 5)
+    stale_after_empty_runs = _positive_int_env("HUNTLOOP_STALE_AFTER_EMPTY_RUNS", 3)
+
     return Config(
         data_dir=data_dir,
         database_url=database_url,
         credentials_database_url=credentials_database_url,
         secret_key=secret_key,
+        openai_base_url=openai_base_url,
+        triage_model=triage_model,
+        scoring_model=scoring_model,
+        extraction_model=extraction_model,
+        max_employer_concurrency=max_employer_concurrency,
+        stale_after_empty_runs=stale_after_empty_runs,
     )
 
 
 def get_secret_key() -> str:
     """Convenience accessor for callers that need only the validated secret key."""
     return load_config().secret_key
+
+
+def resolve_llm_api_key(credentials_session) -> str:
+    """Resolve the OpenAI-compatible API key (OPS-06).
+
+    The credentials store is authoritative — Phase 1 put it in a separate
+    Fernet-encrypted SQLite file precisely so a main-DB backup leak can't
+    expose it (OPS-05). HUNTLOOP_OPENAI_API_KEY is a builder-only fallback
+    for headless CLI use before Phase 4's settings UI exists.
+    """
+    from huntloop.credentials.store import CredentialStore
+
+    stored = CredentialStore(credentials_session).get("openai_api_key")
+    if stored:
+        return stored
+    env_key = os.environ.get("HUNTLOOP_OPENAI_API_KEY")
+    if env_key:
+        return env_key
+    raise ConfigError(
+        "No OpenAI-compatible API key found. Set HUNTLOOP_OPENAI_API_KEY, or "
+        "store one under the credential key 'openai_api_key'."
+    )
