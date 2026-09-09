@@ -493,7 +493,14 @@ class Setting(Base):
     )
 
     key: Mapped[str] = mapped_column(Text, primary_key=True)
+    # none_as_null=True on BOTH sides of the variant: SQLAlchemy's JSON type
+    # defaults to persisting a Python None as the JSON literal "null" (a
+    # non-NULL stored value), not SQL NULL. That default would silently
+    # defeat the ck_settings_secret_value_null CHECK constraint below the
+    # first time set_secret_metadata() writes value=None. See Deviations in
+    # 01-02-SUMMARY.md.
     value: Mapped[dict | None] = mapped_column(
-        JSON().with_variant(JSONB, "postgresql"), nullable=True
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"),
+        nullable=True,
     )
     is_secret: Mapped[bool] = mapped_column(default=False, nullable=False)

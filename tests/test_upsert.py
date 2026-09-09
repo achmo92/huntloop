@@ -7,22 +7,21 @@ status that was manually advanced reverting to 'new' after a scheduled
 run."
 """
 
+from huntloop.db.models import JobStatus
+from huntloop.db.repository import CompanyRepository, JobRepository
+
 
 def test_upsert_is_idempotent_and_preserves_user_fields(main_session):
-    # Imports inside the body — see import discipline rule.
-    from huntloop.db.models import JobStatus
-    from huntloop.db.repository import CompanyRepository, JobRepository
-
     company_repo = CompanyRepository(main_session)
     job_repo = JobRepository(main_session)
 
     # 1. Initial discovery upsert.
-    company = company_repo.upsert(name="Acme Corp")
-    job_repo.upsert(
-        company_id=company.id,
+    company_id = company_repo.upsert_by_name(name="Acme Corp")
+    job_repo.upsert_discovered(
         dedup_key="acme:job-1",
-        title="Staff Engineer",
+        company_id=company_id,
         url="https://example.com/jobs/1",
+        title="Staff Engineer",
     )
     main_session.commit()
 
@@ -36,13 +35,16 @@ def test_upsert_is_idempotent_and_preserves_user_fields(main_session):
 
     # 3. Re-run the SAME discovery upsert with a changed title — simulates
     #    the scheduled run picking the listing up again after a restart.
-    job_repo.upsert(
-        company_id=company.id,
+    job_repo.upsert_discovered(
         dedup_key="acme:job-1",
-        title="Staff Engineer, Platform",
+        company_id=company_id,
         url="https://example.com/jobs/1",
+        title="Staff Engineer, Platform",
     )
     main_session.commit()
+    # The upsert wrote through session.connection() (Core-level), so the
+    # identity-mapped `job` instance above is stale until expired.
+    main_session.expire_all()
 
     # 4. Exactly one row for this dedup_key — no duplicate created.
     all_matches = job_repo.list_by_dedup_key("acme:job-1")

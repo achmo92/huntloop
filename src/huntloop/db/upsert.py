@@ -31,8 +31,15 @@ def upsert(
         if update_columns is not None
         else [c for c in values if c not in index_elements]
     )
-    stmt = stmt.on_conflict_do_update(
-        index_elements=index_elements,
-        set_={c: getattr(stmt.excluded, c) for c in cols},
-    )
+    if cols:
+        stmt = stmt.on_conflict_do_update(
+            index_elements=index_elements,
+            set_={c: getattr(stmt.excluded, c) for c in cols},
+        )
+    else:
+        # No columns to refresh on conflict (e.g. a first-registration
+        # upsert with no extra discovery fields supplied yet). An empty
+        # SET clause is invalid SQL on both backends, so this degrades to
+        # a no-op on conflict rather than raising.
+        stmt = stmt.on_conflict_do_nothing(index_elements=index_elements)
     conn.execute(stmt)

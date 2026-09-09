@@ -5,15 +5,11 @@ meaningless, since :memory: never survives engine disposal in the first
 place.
 """
 
+from huntloop.db.base import Base, make_engine, make_session_factory
+from huntloop.db.repository import CompanyRepository, JobRepository
+
 
 def test_survives_engine_recreation(main_db_path):
-    # Imports deliberately inside the test body (see import discipline rule
-    # in 01-01-PLAN.md Task 3): huntloop.db.models/repository don't exist
-    # with real content yet, so this raises AttributeError/ImportError here,
-    # not at collection time.
-    from huntloop.db.base import Base, make_engine, make_session_factory
-    from huntloop.db.repository import CompanyRepository, JobRepository
-
     # 1. Build engine A, create schema, write one Company and one Job.
     engine_a = make_engine(f"sqlite:///{main_db_path}")
     Base.metadata.create_all(engine_a)
@@ -22,12 +18,12 @@ def test_survives_engine_recreation(main_db_path):
     company_repo = CompanyRepository(session_a)
     job_repo = JobRepository(session_a)
 
-    company = company_repo.upsert(name="Acme Corp")
-    job_repo.upsert(
-        company_id=company.id,
+    company_id = company_repo.upsert_by_name(name="Acme Corp")
+    job_repo.upsert_discovered(
         dedup_key="acme:job-1",
-        title="Staff Engineer",
+        company_id=company_id,
         url="https://example.com/jobs/1",
+        title="Staff Engineer",
     )
     session_a.commit()
 
