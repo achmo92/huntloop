@@ -16,7 +16,7 @@ def install_sqlite_pragmas() -> None:
         return
 
     @event.listens_for(Engine, "connect")
-    def _set_sqlite_pragmas(dbapi_connection, connection_record):  # noqa: ANN001
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):
         # This listener fires for EVERY Engine in the process, including a
         # Postgres engine during the OPS-04 portability test. Guard on the
         # driver module so we never send PRAGMA to Postgres.
