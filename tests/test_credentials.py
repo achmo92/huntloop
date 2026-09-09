@@ -3,7 +3,8 @@
 Covers three distinct behaviors:
 1. Missing/malformed HUNTLOOP_SECRET_KEY fails fast at config-load time.
 2. The MAIN app database file (and its WAL/SHM sidecars) never contains
-   plaintext credential bytes, even after a credential has been written.
+   plaintext OR ciphertext credential bytes, even after a credential has
+   been written and its metadata recorded in `settings`.
 3. The CREDENTIALS store file contains only ciphertext, and reading it
    without HUNTLOOP_SECRET_KEY set raises rather than returning plaintext.
 """
@@ -11,10 +12,17 @@ Covers three distinct behaviors:
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
+
+from huntloop.config import ConfigError
+from huntloop.credentials.base import CredentialsBase
+from huntloop.credentials.models import Credential
+from huntloop.credentials.store import CredentialDecryptError, CredentialStore
+from huntloop.db.repository import SettingsRepository
 
 
 def test_missing_secret_key_fails_fast(monkeypatch):
-    from huntloop.config import ConfigError, load_config
+    from huntloop.config import load_config
 
     monkeypatch.delenv("HUNTLOOP_SECRET_KEY", raising=False)
     try:
@@ -31,21 +39,20 @@ def test_missing_secret_key_fails_fast(monkeypatch):
         assert "not a valid Fernet key" in str(exc)
 
 
-def test_main_db_file_contains_no_plaintext_credential(main_engine, main_db_path, credentials_session):
-    # Imports inside the body — see import discipline rule.
-    from huntloop.credentials.store import CredentialStore
-    from huntloop.db.repository import SettingsRepository
-
+def test_main_db_file_contains_no_plaintext_credential(
+    main_engine, main_session, main_db_path, credentials_session
+):
     secret = "sk-test-abc123-do-not-leak"
 
     store = CredentialStore(credentials_session)
     store.set("llm_api_key", secret)
     credentials_session.commit()
+    stored_ciphertext = credentials_session.get(Credential, "llm_api_key").ciphertext
 
     # The main store keeps only settings *metadata* (key + is_secret flag) —
     # the plaintext/ciphertext value itself must never land in this table.
-    settings_repo = SettingsRepository(main_engine)
-    settings_repo.upsert_metadata(key="llm_api_key", is_secret=True)
+    SettingsRepository(main_session).set_secret_metadata("llm_api_key")
+    main_session.commit()
 
     # Force a checkpoint so WAL contents land in the main file for this
     # assertion (01-RESEARCH.md Pitfall B).
@@ -59,18 +66,21 @@ def test_main_db_file_contains_no_plaintext_credential(main_engine, main_db_path
     ]
     for p in targets:
         if p.exists():
-            assert secret.encode() not in p.read_bytes(), p
+            raw = p.read_bytes()
+            assert secret.encode() not in raw, p
+            # The guarantee is "no credential material in the primary file",
+            # not "the material there is encrypted" — the ciphertext must be
+            # absent too.
+            assert stored_ciphertext not in raw, p
 
 
 def test_credentials_file_is_ciphertext_only(credentials_session, credentials_db_path, monkeypatch):
-    # Imports inside the body — see import discipline rule.
-    from huntloop.credentials.store import CredentialStore
-
     secret = "sk-test-abc123-do-not-leak"
 
     store = CredentialStore(credentials_session)
     store.set("llm_api_key", secret)
     credentials_session.commit()
+    stored_ciphertext = credentials_session.get(Credential, "llm_api_key").ciphertext
 
     with credentials_session.get_bind().connect() as conn:
         conn.exec_driver_sql("PRAGMA wal_checkpoint(FULL)")
@@ -81,16 +91,34 @@ def test_credentials_file_is_ciphertext_only(credentials_session, credentials_db
         Path(str(credentials_db_path) + "-shm"),
     ]
     found_nonzero_file = False
+    found_ciphertext = False
     for p in targets:
         if p.exists():
             raw = p.read_bytes()
             assert secret.encode() not in raw, p
+            if stored_ciphertext in raw:
+                found_ciphertext = True
             if p == credentials_db_path:
                 assert len(raw) > 0
                 found_nonzero_file = True
     assert found_nonzero_file
+    assert found_ciphertext
 
     # Without the key, decrypting must raise rather than return plaintext.
-    monkeypatch.delenv("HUNTLOOP_SECRET_KEY")
-    with pytest.raises(Exception):  # noqa: B017 - broad on purpose, RED baseline
-        CredentialStore(credentials_session).get("llm_api_key")
+    monkeypatch.delenv("HUNTLOOP_SECRET_KEY", raising=False)
+    with pytest.raises(ConfigError):
+        CredentialStore(credentials_session)
+
+
+def test_wrong_secret_key_raises_named_error(credentials_session):
+    store = CredentialStore(credentials_session)
+    store.set("llm_api_key", "sk-test-abc123-do-not-leak")
+    credentials_session.commit()
+
+    wrong_key_store = CredentialStore(credentials_session, secret_key=Fernet.generate_key().decode())
+    with pytest.raises(CredentialDecryptError):
+        wrong_key_store.get("llm_api_key")
+
+
+def test_credentials_metadata_is_exactly_credentials_table():
+    assert set(CredentialsBase.metadata.tables) == {"credentials"}
