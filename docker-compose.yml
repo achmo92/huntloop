@@ -1,0 +1,42 @@
+# Phase 1 stack: migrations plus a dev probe. No `app` service exists yet — the
+# agent (Phase 2) and interface (Phase 4) containers will be added here as
+# additional `depends_on: migrate` consumers, NOT as services that migrate
+# themselves. Running `alembic upgrade head` inside each container's own
+# entrypoint would let two containers race to migrate the same database on a
+# cold start; a one-shot service that must exit 0 first removes that race
+# structurally rather than relying on locking.
+
+x-huntloop-env: &huntloop-env
+  HUNTLOOP_DATA_DIR: /data
+  DATABASE_URL: ${DATABASE_URL:-sqlite:////data/huntloop.db}
+  CREDENTIALS_DATABASE_URL: ${CREDENTIALS_DATABASE_URL:-sqlite:////data/credentials.db}
+  HUNTLOOP_SECRET_KEY: ${HUNTLOOP_SECRET_KEY:?HUNTLOOP_SECRET_KEY must be set - generate one with openssl rand -base64 32}
+
+services:
+  migrate:
+    build: .
+    image: huntloop:local
+    command:
+      - sh
+      - -c
+      - "alembic --name main_db upgrade head && alembic --name credentials_db upgrade head"
+    environment: *huntloop-env
+    volumes:
+      - data:/data
+    restart: "no"
+
+  probe:
+    build: .
+    image: huntloop:local
+    profiles: ["dev"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["python", "-m", "huntloop.dev_probe"]
+    environment: *huntloop-env
+    volumes:
+      - data:/data
+    restart: "no"
+
+volumes:
+  data:
