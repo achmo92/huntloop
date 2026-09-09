@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "huntloop"
+version = "0.1.0"
+description = "Self-hosted job discovery and scoring pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "sqlalchemy==2.0.52",
+    "alembic==1.19.2",
+    "cryptography==50.0.1",
+    "python-dotenv==1.2.3",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]==3.3.5"]
+dev = [
+    "pytest==9.1.1",
+    "testcontainers==4.15.0",
+    "psycopg[binary]==3.3.5",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "postgres: requires a live Postgres container via testcontainers (needs local Docker)",
+]
+filterwarnings = [
+    "error::DeprecationWarning:huntloop.*",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
