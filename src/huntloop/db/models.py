@@ -31,6 +31,7 @@ from sqlalchemy import Enum as SAEnum
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from huntloop.db.base import Base
 
@@ -62,6 +63,46 @@ __all__ = [
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+class UTCDateTime(TypeDecorator):
+    """Portable tz-aware timestamp: `DateTime(timezone=True)` under the hood,
+    with the tzinfo round-trip SQLite otherwise drops made explicit.
+
+    SQLite has no native "timestamp with time zone" type -- SQLAlchemy's
+    generic `DateTime(timezone=True)` is honored by Postgres (maps to
+    `TIMESTAMP WITH TIME ZONE`, which returns tz-aware values) but on
+    SQLite the offset is silently discarded on write and the value comes
+    back naive on read. `docs/architecture/data-model.md` already commits
+    this project to "Always store UTC" as an application-level discipline;
+    this type makes that discipline load-bearing instead of aspirational:
+    every write is normalised to UTC (and a naive input is rejected, since
+    "which timezone" would otherwise be a silent guess), and every read
+    that comes back naive (the SQLite case) is reattached UTC tzinfo. On
+    Postgres, where the driver already returns a tz-aware value, this is a
+    no-op re-normalisation. Discovered while writing plan 01-05's OPS-04
+    portability suite -- see 01-05-SUMMARY.md.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError(
+                "UTCDateTime received a naive datetime -- every write must supply "
+                "a tz-aware value (docs/architecture/data-model.md: 'Always store UTC')."
+            )
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 # --------------------------------------------------------------------------
@@ -188,7 +229,7 @@ class Criteria(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, nullable=False
+        UTCDateTime(), default=_utcnow, nullable=False
     )
 
 
@@ -221,12 +262,12 @@ class CriteriaProposal(Base):
         default=ProposalStatus.PENDING,
         nullable=False,
     )
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     resulting_version: Mapped[int | None] = mapped_column(
         ForeignKey("criteria.version"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, nullable=False
+        UTCDateTime(), default=_utcnow, nullable=False
     )
 
 
@@ -258,9 +299,9 @@ class Company(Base):
     careers_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # USER-OWNED: never touched by a re-run upsert (REG-06).
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
     last_job_count: Mapped[int | None] = mapped_column(nullable=True)
     consecutive_empty_runs: Mapped[int] = mapped_column(default=0, nullable=False)
@@ -298,12 +339,12 @@ class Job(Base):
     )
     # The RESOLVED answer against user locations.
     location_eligible: Mapped[bool | None] = mapped_column(nullable=True)
-    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    posted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, nullable=False
+        UTCDateTime(), default=_utcnow, nullable=False
     )
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, nullable=False
+        UTCDateTime(), default=_utcnow, nullable=False
     )
     # Lazily populated, only for listings reaching full scoring.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -336,7 +377,7 @@ class Job(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=True
     )
     score_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scored_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     scored_criteria_version: Mapped[int | None] = mapped_column(nullable=True)
     scored_rubric_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     scored_with_model: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -386,7 +427,7 @@ class StatusEvent(Base):
         nullable=False,
     )
     changed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, nullable=False
+        UTCDateTime(), default=_utcnow, nullable=False
     )
     source: Mapped[StatusEventSource] = mapped_column(
         SAEnum(
@@ -415,7 +456,7 @@ class FeedbackNote(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, nullable=False
+        UTCDateTime(), default=_utcnow, nullable=False
     )
 
 
@@ -438,9 +479,9 @@ class Run(Base):
         nullable=False,
     )
     started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, nullable=False
+        UTCDateTime(), default=_utcnow, nullable=False
     )
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     # Funnel counters (fetched -> dedup -> deterministic -> triage -> scored):
     # separate columns with default=0, not one aggregate -- RUN-05 requires
     # per-stage counts, and a NULL counter is indistinguishable from a
