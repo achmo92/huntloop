@@ -60,3 +60,44 @@ Migrations run automatically via the `migrate` Compose service, so these are onl
 - [`docs/architecture/data-model.md`](docs/architecture/data-model.md)
 - [`docs/operations/backup-restore.md`](docs/operations/backup-restore.md)
 - [`docs/operations/database-backends.md`](docs/operations/database-backends.md)
+
+## Phase 2 — discovery and scoring
+
+1. Copy the criteria template and edit it:
+   ```bash
+   cp criteria.example.yml criteria.yml
+   ```
+   Fields you must change: `profile_summary`, `seniority_min` / `seniority_max`, `posting_age_days`, `locations.eligible_countries`, `compensation_floor`, and `dimension_weights`.
+
+2. Set your environment variables (the API key lives in the credentials store, not an env var, but you can use `HUNTLOOP_OPENAI_API_KEY` as a headless builder fallback):
+   ```bash
+   export HUNTLOOP_SECRET_KEY=$(openssl rand -base64 32)
+   export HUNTLOOP_OPENAI_BASE_URL="https://api.openai.com/v1"
+   export HUNTLOOP_OPENAI_API_KEY="sk-..."
+   ```
+
+3. Load your criteria into the database:
+   ```bash
+   docker compose run --rm app criteria load /data/criteria.yml
+   ```
+
+4. Add an employer to track:
+   ```bash
+   docker compose run --rm app company add "Cobalt" --url https://cobalt.io/careers
+   ```
+
+5. Run a free discovery pass (no LLM scoring):
+   ```bash
+   docker compose run --rm app run --no-score
+   ```
+   *Note: `run --no-score` requires no API key at all and costs nothing. If you see a `RendererUnavailable` error locally outside Docker, make sure you ran `playwright install --with-deps chromium`.*
+
+6. Run the real scoring pipeline:
+   ```bash
+   docker compose run --rm app run
+   ```
+
+7. View your scored jobs:
+   ```bash
+   docker compose run --rm app jobs list
+   ```

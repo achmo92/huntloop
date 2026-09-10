@@ -1,16 +1,21 @@
-# Phase 1 stack: migrations plus a dev probe. No `app` service exists yet — the
-# agent (Phase 2) and interface (Phase 4) containers will be added here as
-# additional `depends_on: migrate` consumers, NOT as services that migrate
-# themselves. Running `alembic upgrade head` inside each container's own
-# entrypoint would let two containers race to migrate the same database on a
-# cold start; a one-shot service that must exit 0 first removes that race
-# structurally rather than relying on locking.
+# Phase 1 stack: migrations plus a dev probe.
+# The `app` service uses the same image and depends on the `migrate` service with
+# `service_completed_successfully`, NOT as a service that migrates itself. Running
+# `alembic upgrade head` inside each container's own entrypoint would let two
+# containers race to migrate the same database on a cold start; a one-shot service
+# that must exit 0 first removes that race structurally rather than relying on locking.
 
 x-huntloop-env: &huntloop-env
   HUNTLOOP_DATA_DIR: /data
   DATABASE_URL: ${DATABASE_URL:-sqlite:////data/huntloop.db}
   CREDENTIALS_DATABASE_URL: ${CREDENTIALS_DATABASE_URL:-sqlite:////data/credentials.db}
   HUNTLOOP_SECRET_KEY: ${HUNTLOOP_SECRET_KEY:?HUNTLOOP_SECRET_KEY must be set - generate one with openssl rand -base64 32}
+  HUNTLOOP_OPENAI_BASE_URL: ${HUNTLOOP_OPENAI_BASE_URL:-https://api.openai.com/v1}
+  HUNTLOOP_TRIAGE_MODEL: ${HUNTLOOP_TRIAGE_MODEL:-gpt-4o-mini}
+  HUNTLOOP_SCORING_MODEL: ${HUNTLOOP_SCORING_MODEL:-gpt-4o}
+  HUNTLOOP_EXTRACTION_MODEL: ${HUNTLOOP_EXTRACTION_MODEL:-gpt-4o-mini}
+  HUNTLOOP_MAX_EMPLOYER_CONCURRENCY: ${HUNTLOOP_MAX_EMPLOYER_CONCURRENCY:-5}
+  HUNTLOOP_STALE_AFTER_EMPTY_RUNS: ${HUNTLOOP_STALE_AFTER_EMPTY_RUNS:-3}
 
 services:
   migrate:
@@ -33,6 +38,21 @@ services:
       migrate:
         condition: service_completed_successfully
     entrypoint: ["python", "-m", "huntloop.dev_probe"]
+    environment: *huntloop-env
+    volumes:
+      - data:/data
+    restart: "no"
+
+  # The entrypoint is the CLI, the command is the default subcommand, so
+  # `docker compose run --rm app <subcommand>` reads naturally.
+  app:
+    build: .
+    image: huntloop:local
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["huntloop"]
+    command: ["--help"]
     environment: *huntloop-env
     volumes:
       - data:/data

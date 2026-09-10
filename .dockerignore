@@ -17,6 +17,5 @@ data
 .planning
 docs
 tests
-scripts
 node_modules
 .DS_Store
