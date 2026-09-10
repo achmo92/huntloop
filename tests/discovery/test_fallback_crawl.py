@@ -170,6 +170,83 @@ class TestCrawl:
         assert len(result.pages) == 0
         assert "fetch failed: 404" in result.reason
 
+    def test_full_shell_without_job_links_triggers_rendering(self):
+        """Found live at the 02-12 checkpoint (Atlassian): a static shell with
+        plenty of nav text but zero job-detail links must trigger the rendered
+        fetch — the 400-char threshold alone misses it. And once rendered, the
+        job-detail links must be crawled before locale variants."""
+        # >400 chars of nav text, but only locale-variant links (no job segments)
+        nav_text = "<div>" + ("Navigation Menu Item " * 40) + "</div>"
+        static_html = f'''<html><body>{nav_text}
+        <a href="/ja/company/careers">JA</a>
+        <a href="/fr/company/careers">FR</a>
+        </body></html>'''
+        rendered_html = '''<html><body><div>Principal Data Scientist Bengaluru or Remote</div>
+        <a href="/ja/company/careers">JA</a>
+        <a href="/fr/company/careers">FR</a>
+        <a href="/company/careers/details/27069">Job A</a>
+        <a href="/company/careers/details/26576">Job B</a>
+        <a href="/company/careers/details/26571">Job C</a>
+        </body></html>'''
+
+        def page(url, html, rendered):
+            return PageResult(ok=True, url=url, final_url=url, status_code=200, html=html, rendered=rendered, truncated=False, error=None)
+
+        static = RecordingFetcher({
+            "https://acme.com/company/careers/all-jobs": page("https://acme.com/company/careers/all-jobs", static_html, False),
+        })
+        rendered = RecordingFetcher({
+            "https://acme.com/company/careers/all-jobs": page("https://acme.com/company/careers/all-jobs", rendered_html, True),
+            "https://acme.com/company/careers/details/27069": page("https://acme.com/company/careers/details/27069", "<p>Job A detail</p>", True),
+            "https://acme.com/company/careers/details/26576": page("https://acme.com/company/careers/details/26576", "<p>Job B detail</p>", True),
+            "https://acme.com/company/careers/details/26571": page("https://acme.com/company/careers/details/26571", "<p>Job C detail</p>", True),
+        })
+
+        result = crawl_careers(
+            static, "https://acme.com/company/careers/all-jobs",
+            max_pages=4, rendered_fetcher=rendered,
+        )
+
+        assert result.rendered is True
+        assert len(result.pages) == 4  # base + 3 detail pages
+        # Detail pages crawled, locale variants never touched
+        assert "https://acme.com/company/careers/details/27069" in rendered.calls
+        assert "https://acme.com/company/careers/details/26576" in rendered.calls
+        assert "https://acme.com/ja/company/careers" not in rendered.calls
+        assert "https://acme.com/fr/company/careers" not in rendered.calls
+        # The rendered base text (with the job grid) is what extraction sees
+        assert "Principal Data Scientist" in result.pages[0].text
+
+    def test_static_page_with_job_links_skips_rendering(self):
+        """A static page with plenty of text that already exposes job links
+        must NOT pay for Chromium."""
+        body_text = "<p>" + ("We are hiring great people everywhere. " * 20) + "</p>"
+        static_html = f'{body_text}<a href="/jobs/1">Job 1</a><a href="/jobs/2">Job 2</a>'
+        static = RecordingFetcher({
+            "https://acme.com/careers": PageResult(ok=True, url="https://acme.com/careers", final_url="https://acme.com/careers", status_code=200, html=static_html, rendered=False, truncated=False, error=None),
+        })
+        rendered = RecordingFetcher({})
+
+        result = crawl_careers(static, "https://acme.com/careers", rendered_fetcher=rendered)
+
+        assert result.rendered is False
+        assert rendered.calls == []
+
+    def test_trailing_slash_variant_not_crawled_twice(self):
+        """The base page and its slashless variant are the same page — the
+        budget must not be spent on it twice."""
+        html = '<a href="/careers">Careers</a><a href="/jobs/1">Job 1</a>'
+        fetcher = RecordingFetcher({
+            "https://acme.com/careers/": PageResult(ok=True, url="https://acme.com/careers/", final_url="https://acme.com/careers/", status_code=200, html=html, rendered=False, truncated=False, error=None),
+            "https://acme.com/careers": PageResult(ok=True, url="https://acme.com/careers", final_url=None, status_code=200, html=html, rendered=False, truncated=False, error=None),
+            "https://acme.com/jobs/1": PageResult(ok=True, url="https://acme.com/jobs/1", final_url=None, status_code=200, html="", rendered=False, truncated=False, error=None),
+        })
+
+        result = crawl_careers(fetcher, "https://acme.com/careers/", max_pages=8)
+
+        assert "https://acme.com/careers" not in fetcher.calls
+        assert len(result.pages) == 2  # base + /jobs/1
+
     def test_ats_config_roundtrip_with_sqlalchemy_hack(self, main_session):
         from huntloop.db.models import Company
         from huntloop.discovery.crawl.careers import load_crawl_hash, save_crawl_hash

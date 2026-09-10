@@ -141,6 +141,24 @@ def _is_priority_link(url: str) -> bool:
     return False
 
 
+# Path segments that indicate a link points at an individual job (or a jobs
+# index). Deliberately EXCLUDES "career"/"careers": on a careers site every
+# link contains it (nav, locale variants, team pages), so it carries no signal
+# about whether listings are actually reachable from the static HTML.
+JOB_DETAIL_SEGMENTS: frozenset[str] = frozenset({
+    "job", "jobs", "position", "positions", "posting", "postings",
+    "vacancy", "vacancies", "requisition", "requisitions",
+    "detail", "details", "role", "roles", "opening", "openings",
+})
+
+
+def _looks_like_job_detail(url: str) -> bool:
+    """True when a path segment marks this URL as a job listing (page)."""
+    parsed = urlparse(url)
+    segments = [s.lower() for s in parsed.path.split("/") if s]
+    return any(seg in JOB_DETAIL_SEGMENTS for seg in segments)
+
+
 def crawl_careers(
     fetcher,
     base_url: str,
@@ -170,35 +188,56 @@ def crawl_careers(
         return CrawlResult(base_url, page_hash=page_hash, skipped=True, reason="unchanged")
 
     rendered = False
-    # 3. If near-empty shell and rendered_fetcher provided, retry
-    if len(visible_text(html)) < 400 and rendered_fetcher is not None:
-        try:
-            rendered_result = rendered_fetcher.fetch(base_url)
-            if rendered_result.ok:
-                html = rendered_result.html
-                page_hash = content_hash(html)
-                rendered = True
-        except Exception as exc:
-            # Catch RendererUnavailable (or any error) and ignore, sticking to static
-            pass
+    # 3. Render when the static HTML cannot lead us to any job listing:
+    #    either a near-empty shell, or a "full-looking" shell (nav menus,
+    #    locale switchers) whose same-origin links contain no job-detail URL.
+    #    Found live at the 02-12 checkpoint: Atlassian's careers page has 5KB
+    #    of static nav text but zero listing links — Chromium renders it into
+    #    200+ /careers/details/<id> links.
+    if rendered_fetcher is not None:
+        static_links = [l for l in extract_links(html, base_url) if same_origin(l, base_url)]
+        static_has_job_links = any(_looks_like_job_detail(l) for l in static_links)
+        if len(visible_text(html)) < 400 or not static_has_job_links:
+            try:
+                rendered_result = rendered_fetcher.fetch(base_url)
+                if rendered_result.ok:
+                    html = rendered_result.html
+                    page_hash = content_hash(html)
+                    rendered = True
+            except Exception:
+                # Catch RendererUnavailable (or any error) and ignore, sticking to static
+                pass
 
     # 4. Collect links and crawl detail pages
     all_links = extract_links(html, base_url)
     same_origin_links = [link for link in all_links if same_origin(link, base_url)]
-    
-    # Sort: priority links first
-    same_origin_links.sort(key=lambda url: 0 if _is_priority_link(url) else 1)
-    
-    visited = {base_url}
+
+    # Sort: job-detail links first, then generic careers hints, then the rest.
+    # Without the first tier, locale variants of the careers landing page
+    # (/ja/company/careers, /fr/company/careers, ...) match the generic
+    # "careers" hint and burn the entire max_pages budget before a single
+    # listing page is reached.
+    same_origin_links.sort(
+        key=lambda url: (
+            0 if _looks_like_job_detail(url) else 1 if _is_priority_link(url) else 2
+        )
+    )
+
+    def _normalize(url: str) -> str:
+        # Trailing-slash variants of the same page must not consume the budget
+        # twice (/company/careers vs /company/careers/).
+        return url.rstrip("/") or url
+
+    visited = {_normalize(base_url)}
     pages = [CrawledPage(url=base_url, text=visible_text(html), hash=page_hash)]
-    
+
     for link in same_origin_links:
         if len(pages) >= max_pages:
             break
-        if link in visited:
+        if _normalize(link) in visited:
             continue
-            
-        visited.add(link)
+
+        visited.add(_normalize(link))
         try:
             link_fetcher = rendered_fetcher if rendered else fetcher
             if link_fetcher is None:
