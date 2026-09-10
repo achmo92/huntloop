@@ -80,6 +80,7 @@ Migrations run automatically via the `migrate` Compose service, so these are onl
    ```bash
    docker compose run --rm app criteria load /data/criteria.yml
    ```
+   (Outside Docker, the same command is `huntloop criteria load criteria.yml` — it prints the new version number.)
 
 4. Add an employer to track:
    ```bash
