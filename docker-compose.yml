@@ -11,6 +11,10 @@ x-huntloop-env: &huntloop-env
   CREDENTIALS_DATABASE_URL: ${CREDENTIALS_DATABASE_URL:-sqlite:////data/credentials.db}
   HUNTLOOP_SECRET_KEY: ${HUNTLOOP_SECRET_KEY:?HUNTLOOP_SECRET_KEY must be set - generate one with openssl rand -base64 32}
   HUNTLOOP_OPENAI_BASE_URL: ${HUNTLOOP_OPENAI_BASE_URL:-https://api.openai.com/v1}
+  # Optional passthrough — never required. The designed home for the API key is
+  # the encrypted credentials store (key 'openai_api_key'); this env var is the
+  # documented builder-only fallback (see config.resolve_llm_api_key).
+  HUNTLOOP_OPENAI_API_KEY: ${HUNTLOOP_OPENAI_API_KEY:-}
   HUNTLOOP_TRIAGE_MODEL: ${HUNTLOOP_TRIAGE_MODEL:-gpt-4o-mini}
   HUNTLOOP_SCORING_MODEL: ${HUNTLOOP_SCORING_MODEL:-gpt-4o}
   HUNTLOOP_EXTRACTION_MODEL: ${HUNTLOOP_EXTRACTION_MODEL:-gpt-4o-mini}
