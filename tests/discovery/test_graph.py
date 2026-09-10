@@ -1,413 +1,985 @@
 """Tests for the LangGraph orchestration (02-10).
 
 DISC-03 is the load-bearing test: one employer's failure does not stop the run.
+`test_continues_past_failure` injects a real exception into the middle employer
+of a three-employer fan-out and asserts the other two employers' work survives,
+through the actual compiled graph -- not through a mock of it.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import inspect
+import json
 import uuid
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from datetime import datetime, timedelta, timezone
+from typing import get_args, get_type_hints
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+import huntloop.graph.nodes as nodes_mod
 from huntloop.config import load_config
-from huntloop.db.models import Company, Job, Run, RunError, RunStatus, FilterTier
+from huntloop.criteria.loader import save_new_criteria_version
+from huntloop.criteria.schema import (
+    CompensationFloor,
+    CriteriaPayload,
+    DimensionWeights,
+    LocationCriteria,
+)
+from huntloop.db.models import Company, Criteria, FilterTier, Job, Run, RunError, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
 from huntloop.discovery.ats.base import FetchResult, FetchStatus, RawListing
+from huntloop.discovery.fetch.page import PageResult
+from huntloop.graph.nodes import (
+    fan_out_to_employers,
+    finalize_run,
+    load_employers,
+    process_employer,
+    run_status,
+)
 from huntloop.graph.state import DiscoveryState, EmployerResult
-from huntloop.graph.nodes import load_employers, fan_out_to_employers, process_employer
-from huntloop.llm.client import LlmUsage
 
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session, sessionmaker
+NOW = datetime.now(timezone.utc)
 
+
+# ---------------------------------------------------------------------------
+# Fakes
+# ---------------------------------------------------------------------------
+
+class RecordingClient:
+    """A fake OpenAI-shaped client that is safe under the graph's real concurrency.
+
+    Send-dispatched employer branches run in threads and share this client, so a
+    single ordered queue would interleave (a triage call could receive a scoring
+    response and silently corrupt the run). Responses are therefore queued per
+    call type and dispatched on the system prompt; every call is recorded so
+    tests can assert exactly how many model calls a code path made (the
+    --no-score zero-call assertion).
+    """
+
+    def __init__(self, *, triage: list | None = None, scoring: list | None = None,
+                 extraction: list | None = None) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._queues = {
+            "triaging job listings": list(triage or []),
+            "scoring job listings": list(scoring or []),
+            "extract job postings": list(extraction or []),
+        }
+        self.calls: list[dict] = []
+
+    class _Completions:
+        def __init__(self, parent) -> None:
+            self.parent = parent
+
+        def create(self, **kwargs):
+            parent = self.parent
+            system = kwargs["messages"][0]["content"]
+            with parent._lock:
+                parent.calls.append(kwargs)
+                queue = next(
+                    (q for marker, q in parent._queues.items() if marker in system),
+                    None,
+                )
+                if queue is None:
+                    raise AssertionError(f"unknown system prompt: {system[:80]!r}")
+                if not queue:
+                    raise AssertionError(
+                        "model call made but no queued response of this type -- "
+                        "code path was expected to make zero (or fewer) model calls"
+                    )
+                resp = queue.pop(0)
+
+            if isinstance(resp, Exception):
+                raise resp
+
+            from collections import namedtuple
+
+            Choice = namedtuple("Choice", ["message"])
+            Message = namedtuple("Message", ["content"])
+            Usage = namedtuple("Usage", ["prompt_tokens", "completion_tokens"])
+            choice = Choice(message=Message(content=json.dumps(resp)))
+
+            class FakeCompletion:
+                choices = [choice]
+                usage = Usage(prompt_tokens=10, completion_tokens=20)
+                model = kwargs.get("model", "fake-model")
+
+            return FakeCompletion()
+
+    @property
+    def chat(self):
+        class Chat:
+            completions = self._Completions(self)
+
+        return Chat()
+
+
+TRIAGE_KEEP = {"keep": True, "reason": "relevant"}
+TRIAGE_DROP = {"keep": False, "reason": "not relevant"}
+
+
+def dims_response(score: int) -> dict:
+    return {
+        "role_fit": {"score": score, "reason": "matches profile"},
+        "seniority_fit": {"score": score, "reason": "level matches"},
+        "employer_fit": {"score": score, "reason": "stable company"},
+        "trajectory": {"score": score, "reason": "clear growth"},
+        "summary": "solid match",
+    }
+
+
+EXTRACTION_ONE = {
+    "listings": [
+        {
+            "title": "Staff Backend Engineer",
+            "url": None,
+            "location": "Remote",
+            "description": "Distributed systems role with Python.",
+            "posted": None,
+            "compensation": None,
+        }
+    ]
+}
+
+
+class FakeAdapter:
+    """ATS adapter stub: raises for designated slugs, returns listings otherwise."""
+
+    platform = "greenhouse"
+
+    def __init__(self, listings_by_slug: dict[str, list[RawListing]] | None = None,
+                 fail_slugs: frozenset[str] = frozenset()) -> None:
+        self.listings_by_slug = listings_by_slug or {}
+        self.fail_slugs = fail_slugs
+
+    def fetch(self, slug: str, *, client=None) -> FetchResult:
+        if slug in self.fail_slugs:
+            raise RuntimeError(f"simulated 500 from {slug}")
+        return FetchResult(status=FetchStatus.OK, listings=self.listings_by_slug.get(slug, []))
+
+
+class FakePageFetcher:
+    """PageFetcher stub serving canned HTML per URL."""
+
+    def __init__(self, html_by_url: dict[str, str]) -> None:
+        self.html_by_url = html_by_url
+        self.fetched: list[str] = []
+
+    def fetch(self, url: str) -> PageResult:
+        self.fetched.append(url)
+        if url in self.html_by_url:
+            return PageResult(ok=True, url=url, final_url=url, status_code=200,
+                              html=self.html_by_url[url])
+        return PageResult(ok=False, url=url, status_code=404, error="not found")
+
+
+class TrackingSession(Session):
+    """Session subclass that records every close(), to prove finally-block behaviour."""
+
+    closed: list[Session] = []   # rebound per-test by the tracking_sessionmaker fixture
+
+    def close(self):
+        type(self).closed.append(self)
+        super().close()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures and helpers
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def sessionmaker(portable_engine):
+    from sqlalchemy.orm import sessionmaker as sm
+
+    return sm(bind=portable_engine)
+
+
+@pytest.fixture
+def tracking_sessionmaker(portable_engine):
+    from sqlalchemy.orm import sessionmaker as sm
+
+    TrackingSession.closed = []
+    return sm(bind=portable_engine, class_=TrackingSession)
+
+
+@pytest.fixture
+def default_criteria():
+    return CriteriaPayload(
+        profile_summary="Senior Python backend developer",
+        seniority_min="senior",
+        seniority_max="principal",
+        dimension_weights=DimensionWeights(
+            role_fit=0.4,
+            seniority_fit=0.2,
+            employer_fit=0.2,
+            trajectory=0.2,
+        ),
+        locations=LocationCriteria(eligible_countries=["US"]),
+        compensation_floor=CompensationFloor(
+            amount="120000",
+            currency="USD",
+            period="annual",
+        ),
+    )
+
+
+def seed_criteria(sessionmaker, payload) -> int:
+    """Insert the active criteria row; a run without one must not start."""
+    session = sessionmaker()
+    try:
+        version = save_new_criteria_version(session, payload)
+        session.commit()
+        return version
+    finally:
+        session.close()
+
+
+def make_company(session, name, *, slug=None, careers_url=None, enabled=True) -> Company:
+    company = Company(
+        id=uuid.uuid4(),
+        name=name,
+        enabled=enabled,
+        ats="greenhouse" if slug else None,
+        ats_identifier=slug,
+        careers_url=careers_url,
+        resolved_at=NOW if slug else None,
+    )
+    session.add(company)
+    session.commit()
+    # Load all attributes, then detach: callers keep using company.id after the
+    # creating session closes (commit expires attributes by default).
+    session.refresh(company)
+    session.expunge(company)
+    return company
+
+
+def make_listing(external_id: str, *, posted_days: int = 0,
+                 title: str = "Senior Software Engineer") -> RawListing:
+    return RawListing(
+        external_id=external_id,
+        url=f"https://example.com/jobs/{external_id}",
+        title=title,
+        description_plain="We are looking for a Python engineer with distributed systems experience.",
+        description_html="<p>We are looking for a Python engineer.</p>",
+        location_raw="New York, NY",
+        posted_at=NOW - timedelta(days=posted_days),
+        comp_raw="$130k - $150k",
+    )
+
+
+def start_run(sessionmaker) -> uuid.UUID:
+    session = sessionmaker()
+    try:
+        run = RunRepository(session).start(RunTrigger.MANUAL)
+        session.commit()
+        return run.id
+    finally:
+        session.close()
+
+
+def employer_state(sessionmaker, company_id, run_id=None, *, no_score=False,
+                   criteria_version=1) -> dict:
+    return {
+        "company_id": str(company_id),
+        "run_id": str(run_id or start_run(sessionmaker)),
+        "criteria_version": criteria_version,
+        "no_score": no_score,
+    }
+
+
+def run_errors(sessionmaker, run_id) -> list[RunError]:
+    session = sessionmaker()
+    try:
+        return list(
+            session.execute(select(RunError).where(RunError.run_id == run_id)).scalars()
+        )
+    finally:
+        session.close()
+
+
+def get_run(sessionmaker, run_id) -> Run | None:
+    session = sessionmaker()
+    try:
+        return session.get(Run, run_id)
+    finally:
+        session.close()
+
+
+CAREERS_HTML = (
+    "<html><body><h1> Careers at Acme </h1>"
+    + "<p> Acme builds things. " + "We hire engineers who like distributed systems. " * 40
+    + "</p></body></html>"
+)
+
+
+# ---------------------------------------------------------------------------
+# Task 1: graph state and the per-employer node (DISC-03)
+# ---------------------------------------------------------------------------
 
 class TestNodes:
-    """Task 1: Graph state and per-employer node with fault isolation."""
+    """Node-level behaviour: state reducers, fault isolation, both fetch paths."""
 
     def test_discovery_state_append_reducer(self):
-        """DiscoveryState.employer_results uses operator.add, not replacement."""
+        """employer_results/errors use operator.add, and adding two partial states
+        yields BOTH branches' results -- not just the last one to finish."""
         import operator
-        from typing import Annotated, get_origin, get_args, ForwardRef
-        import re
-        
-        # Check the annotation directly from the TypedDict
-        # TypedDict uses ForwardRef for annotations
-        annotations = DiscoveryState.__annotations__
-        
-        # The annotation is a ForwardRef, so we need to check its string representation
-        employer_results_annotation = annotations.get("employer_results")
-        
-        # ForwardRef has __forward_arg__ which contains the annotation string
-        annotation_str = employer_results_annotation.__forward_arg__
-        
-        # Verify it contains Annotated and operator.add
-        assert "Annotated" in annotation_str
-        assert "operator.add" in annotation_str
 
-    def test_process_employer_resolved_ats_returns_result(self, sessionmaker, llm_client, http_client, static_fetcher, rendered_fetcher):
-        """process_employer for a resolved ATS employer returns EmployerResult with counts."""
-        # Setup: create a company with resolved ATS
+        hints = get_type_hints(DiscoveryState, include_extras=True)
+        for key in ("employer_results", "errors"):
+            annotated = hints[key]
+            reducer = get_args(annotated)[-1]
+            assert reducer is operator.add, f"{key} is not annotated with operator.add"
+
+        # Direct reducer behaviour: two concurrent branches' partial states merge.
+        r1: EmployerResult = {"company_id": "a", "fetched": 3}
+        r2: EmployerResult = {"company_id": "b", "fetched": 5}
+        merged = operator.add([r1], [r2])
+        assert merged == [r1, r2]
+
+    def test_process_employer_resolved_ats_returns_result(self, sessionmaker, default_criteria, monkeypatch):
+        """A resolved ATS employer produces full per-stage counts and error=None."""
+        seed_criteria(sessionmaker, default_criteria)
         session = sessionmaker()
-        company = Company(
-            id=uuid.uuid4(),
-            name="TestCompany",
-            enabled=True,
-            ats="greenhouse",
-            ats_identifier="testco",
-            resolved_at=datetime.now(timezone.utc),
-        )
-        session.add(company)
-        session.commit()
-        
-        # Mock adapter returning listings
+        try:
+            company = make_company(session, "AtsCo", slug="atsco")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
+
         listings = [
-            RawListing(
-                external_id="1",
-                title="Engineer",
-                url="https://example.com/job/1",
-                location_raw="Remote",
-                posted_at=datetime.now(timezone.utc),
-            )
+            make_listing("fresh-1", posted_days=0),   # passes deterministic filters
+            make_listing("stale-1", posted_days=60),  # dropped by posting_age (30d)
         ]
-        
-        # Execute
-        state = {
-            "company_id": str(company.id),
-            "run_id": str(uuid.uuid4()),
-            "criteria_version": 1,
-            "no_score": False,
-        }
-        
-        # This test requires mocking the adapter - will be completed in implementation
-        session.close()
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"atsco": listings}),
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
 
-    def test_continues_past_failure(self, sessionmaker, llm_client, http_client):
-        """DISC-03: An employer failure is caught, recorded, and the run continues."""
+        result = process_employer(
+            employer_state(sessionmaker, company.id, run_id),
+            sessionmaker=sessionmaker,
+            llm_client=client,
+            http_client=MagicMock(),
+        )["employer_results"][0]
+
+        assert result["error"] is None
+        assert result["path"] == "ats"
+        assert result["fetched"] == 2
+        assert result["after_dedup"] == 2
+        assert result["after_deterministic"] == 1     # stale listing dropped here
+        assert result["after_triage"] == 1
+        assert result["scored"] == 1
+        assert result["written"] == 2                  # DISC-06: drops are written too
+        assert result["updated"] == 0
+        assert result["tokens_in"] == 20               # 2 model calls x prompt_tokens=10
+        assert result["tokens_out"] == 40
+        assert len(client.calls) == 2                  # triage + scoring, nothing more
+
+    def test_continues_past_failure(self, sessionmaker, default_criteria, monkeypatch):
+        """DISC-03: the middle employer's exception is caught, recorded against
+        that employer with its stage, and the other two employers still complete
+        through the real compiled graph."""
         from huntloop.graph.build import build_graph
-        
+
+        criteria_version = seed_criteria(sessionmaker, default_criteria)
         session = sessionmaker()
-        
-        # Create 3 companies, middle one will fail
-        companies = []
-        for i, name in enumerate(["Good1", "Bad", "Good2"]):
-            company = Company(
-                id=uuid.uuid4(),
-                name=name,
-                enabled=True,
-                ats="greenhouse",
-                ats_identifier=f"company{i}",
-                resolved_at=datetime.now(timezone.utc),
-            )
-            session.add(company)
-            companies.append(company)
-        session.commit()
-        
-        run_id = uuid.uuid4()
-        
-        # Build state
-        state: DiscoveryState = {
+        try:
+            good1 = make_company(session, "Good1", slug="good1")
+            bad = make_company(session, "Bad", slug="bad")
+            good2 = make_company(session, "Good2", slug="good2")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
+
+        listings = {slug: [make_listing(f"{slug}-1")] for slug in ("good1", "good2")}
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug=listings, fail_slugs={"bad"}),
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP, TRIAGE_KEEP], scoring=[dims_response(4), dims_response(4)])
+
+        graph = build_graph(
+            sessionmaker=sessionmaker,
+            llm_client=client,
+            http_client=MagicMock(),
+            static_fetcher=MagicMock(),
+        )
+        final = graph.invoke({
             "run_id": str(run_id),
-            "criteria_version": 1,
+            "criteria_version": criteria_version,
             "no_score": False,
-            "company_ids": [str(c.id) for c in companies],
+            "company_ids": [str(good1.id), str(bad.id), str(good2.id)],
             "employer_results": [],
             "errors": [],
-        }
-        
-        # Mock: one employer's adapter raises
-        # Will need to inject a failing adapter for "Bad" company
-        # This is the core DISC-03 test
-        
-        # Expected: employer_results has length 3, exactly one with error
-        # Expected: RunError row exists with company_id = Bad's id
-        # Expected: other two have complete results
-        
-        session.close()
+        })
+
+        results = final["employer_results"]
+        # Three employers contributed through the append reducer -- not one, not two.
+        assert len(results) == 3
+
+        errored = [r for r in results if r.get("error")]
+        assert len(errored) == 1
+        assert errored[0]["company_id"] == str(bad.id)
+        assert errored[0]["company_name"] == "Bad"
+        assert errored[0]["stage"] == "fetch"
+        assert "simulated 500" in errored[0]["error"]
+
+        # The two healthy employers produced complete results with real writes.
+        by_company = {r["company_id"]: r for r in results}
+        for good in (good1, good2):
+            r = by_company[str(good.id)]
+            assert r["error"] is None
+            assert r["fetched"] == 1
+            assert r["scored"] == 1
+            assert r["written"] == 1
+
+        # The failure is recorded against ITS company id, not the run generally.
+        errors = run_errors(sessionmaker, run_id)
+        assert len(errors) == 1
+        assert errors[0].company_id == bad.id
+        assert errors[0].stage == "fetch"
+
+        # finalize_run ran: the run row carries a terminal status.
+        run = get_run(sessionmaker, run_id)
+        assert run.status is RunStatus.PARTIAL
+        assert run.finished_at is not None
 
     def test_error_recorded_against_correct_company(self, sessionmaker):
-        """The failing employer's error is recorded against its company_id."""
+        """RunRepository.record_error stamps the company_id it was given (02-09
+        contract the graph depends on for per-employer attribution)."""
         session = sessionmaker()
-        run_id = uuid.uuid4()
-        company_id = uuid.uuid4()
-        
-        # Create the error
-        repo = RunRepository(session)
-        error = repo.record_error(run_id, company_id, "fetch", "Test error")
-        
-        assert error.company_id == company_id
-        assert error.stage == "fetch"
-        
-        session.close()
+        try:
+            run = RunRepository(session).start(RunTrigger.MANUAL)
+            company = make_company(session, "ErrCo")
+            session.commit()
 
-    def test_process_employer_unresolved_with_careers_url(self, sessionmaker, llm_client):
-        """UNRESOLVED employer with careers_url takes the crawl path."""
-        # Setup: company with no ATS but careers_url
+            error = RunRepository(session).record_error(
+                run.id, company.id, "fetch", "boom"
+            )
+            assert error.company_id == company.id
+            assert error.stage == "fetch"
+            assert error.message == "boom"
+        finally:
+            session.close()
+
+    def test_process_employer_unresolved_with_careers_url(self, sessionmaker, default_criteria, monkeypatch):
+        """An UNRESOLVED employer with a careers_url takes the crawl path and
+        still produces counts end to end."""
+        seed_criteria(sessionmaker, default_criteria)
         session = sessionmaker()
-        company = Company(
-            id=uuid.uuid4(),
-            name="CrawlCo",
-            enabled=True,
-            ats=None,
-            careers_url="https://crawlco.com/careers",
-            ats_config={"resolution": {"status": "unresolved"}},
+        try:
+            company = make_company(session, "CrawlCo", careers_url="https://acme.com/careers")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
+
+        fetcher = FakePageFetcher({"https://acme.com/careers": CAREERS_HTML})
+        # One extraction call, then triage + scoring for the single extracted listing.
+        client = RecordingClient(extraction=[EXTRACTION_ONE], triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+
+        result = process_employer(
+            employer_state(sessionmaker, company.id, run_id),
+            sessionmaker=sessionmaker,
+            llm_client=client,
+            http_client=MagicMock(),
+            static_fetcher=fetcher,
+        )["employer_results"][0]
+
+        assert result["error"] is None
+        assert result["path"] == "crawl"
+        assert result["fetched"] == 1
+        assert result["after_dedup"] == 1
+        assert result["scored"] == 1
+        assert result["written"] == 1
+        assert fetcher.fetched == ["https://acme.com/careers"]
+
+    def test_process_employer_unresolved_no_careers_url(self, sessionmaker, default_criteria):
+        """An UNRESOLVED employer with no careers_url gets a zero-count result
+        with a named path (skipped), not an error."""
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            company = make_company(session, "SkippedCo")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
+
+        result = process_employer(
+            employer_state(sessionmaker, company.id, run_id),
+            sessionmaker=sessionmaker,
+            llm_client=MagicMock(),
+            http_client=MagicMock(),
+        )["employer_results"][0]
+
+        assert result["error"] is None
+        assert result["path"] == "skipped"
+        assert result["fetched"] == 0
+        assert result["after_dedup"] == 0
+        assert result["written"] == 0
+
+    def test_record_fetch_outcome_called_once_ats_path(self, sessionmaker, default_criteria, monkeypatch):
+        """record_fetch_outcome is called exactly once with the real FetchResult
+        on the ATS path."""
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            company = make_company(session, "AtsCo2", slug="atsco2")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
+
+        calls: list = []
+        monkeypatch.setattr(
+            nodes_mod, "record_fetch_outcome",
+            lambda session, comp, result: calls.append(result),
         )
-        session.add(company)
-        session.commit()
-        
-        # Execute: should call crawl path
-        # Will need to mock the crawl
-        
-        session.close()
-
-    def test_process_employer_unresolved_no_careers_url(self, sessionmaker):
-        """UNRESOLVED employer with no careers_url returns zero-count result."""
-        session = sessionmaker()
-        company = Company(
-            id=uuid.uuid4(),
-            name="SkippedCo",
-            enabled=True,
-            ats=None,
-            ats_config={"resolution": {"status": "unresolved"}},
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"atsco2": [make_listing("a-1")]}),
         )
-        session.add(company)
-        session.commit()
-        
-        state = {
-            "company_id": str(company.id),
-            "run_id": str(uuid.uuid4()),
-            "criteria_version": 1,
-            "no_score": False,
-        }
-        
-        # Expected: result with path="skipped", all counts=0, no error
-        
-        session.close()
 
-    def test_record_fetch_outcome_called_once(self, sessionmaker):
-        """process_employer calls record_fetch_outcome exactly once."""
-        # Both ATS and crawl paths must call record_fetch_outcome
-        # Need to mock and count calls
-        pass
+        process_employer(
+            employer_state(sessionmaker, company.id, run_id, no_score=True),
+            sessionmaker=sessionmaker,
+            llm_client=RecordingClient(),
+            http_client=MagicMock(),
+        )
 
-    def test_no_score_runs_zero_model_calls(self, sessionmaker, llm_client):
-        """--no-score runs fetch, dedup, deterministic filters, then stops."""
-        # Verify the recording client shows ZERO model calls
-        pass
+        assert len(calls) == 1
+        assert isinstance(calls[0], FetchResult)
+        assert calls[0].status is FetchStatus.OK
 
-    def test_dedup_key_error_counted_in_failed(self, sessionmaker):
-        """A DedupKeyError on one listing is counted in employer's failed."""
-        from huntloop.discovery.dedup import DedupKeyError
-        # Single listing with unkeyable data should increment failed counter
-        pass
+    def test_record_fetch_outcome_called_once_crawl_path(self, sessionmaker, default_criteria, monkeypatch):
+        """record_fetch_outcome is called exactly once with the real FetchResult
+        on the crawl path too (via to_fetch_result, DISC-04 semantics preserved)."""
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            company = make_company(session, "CrawlCo2", careers_url="https://acme.com/careers")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
 
-    def test_session_closed_in_finally(self, sessionmaker):
-        """process_employer closes its session even when the node raises."""
-        # Verify session is closed after exception
-        pass
+        calls: list = []
+        monkeypatch.setattr(
+            nodes_mod, "record_fetch_outcome",
+            lambda session, comp, result: calls.append(result),
+        )
+        fetcher = FakePageFetcher({"https://acme.com/careers": CAREERS_HTML})
+        client = RecordingClient(extraction=[EXTRACTION_ONE], triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+
+        process_employer(
+            employer_state(sessionmaker, company.id, run_id),
+            sessionmaker=sessionmaker,
+            llm_client=client,
+            http_client=MagicMock(),
+            static_fetcher=fetcher,
+        )
+
+        assert len(calls) == 1
+        assert isinstance(calls[0], FetchResult)
+
+    def test_no_score_zero_model_calls(self, sessionmaker, default_criteria, monkeypatch):
+        """--no-score runs fetch, dedup and deterministic filters and stops:
+        zero model calls, scored == 0."""
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            company = make_company(session, "NoScoreCo", slug="noscore")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
+
+        listings = [make_listing("ns-1", posted_days=0), make_listing("ns-2", posted_days=60)]
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"noscore": listings}),
+        )
+        # Empty queue: any model call raises AssertionError via RecordingClient,
+        # and the explicit calls assertion below is the real check.
+        client = RecordingClient()
+
+        result = process_employer(
+            employer_state(sessionmaker, company.id, run_id, no_score=True),
+            sessionmaker=sessionmaker,
+            llm_client=client,
+            http_client=MagicMock(),
+        )["employer_results"][0]
+
+        assert client.calls == []
+        assert result["scored"] == 0
+        assert result["after_deterministic"] == 1     # the fresh listing passed filters
+        assert result["after_triage"] == 0
+        assert result["written"] == 2
+        assert result["error"] is None
+
+    def test_dedup_key_error_counted_in_failed(self, sessionmaker, default_criteria, monkeypatch):
+        """A DedupKeyError on one listing counts in the employer's `failed`
+        and does not fail the employer."""
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            company = make_company(session, "DedupCo", slug="dedup")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
+
+        good = make_listing("d-1")
+        # Neither external id nor usable URL: unkeyable -> DedupKeyError.
+        unkeyable = RawListing(external_id=None, url="", title="Broken")
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"dedup": [good, unkeyable]}),
+        )
+
+        result = process_employer(
+            employer_state(sessionmaker, company.id, run_id, no_score=True),
+            sessionmaker=sessionmaker,
+            llm_client=RecordingClient(),
+            http_client=MagicMock(),
+        )["employer_results"][0]
+
+        assert result["error"] is None
+        assert result["fetched"] == 2
+        assert result["after_dedup"] == 1
+        assert result["failed"] == 1
+        assert result["written"] == 1
+
+    def test_session_closed_even_when_employer_fails(self, tracking_sessionmaker, default_criteria, monkeypatch):
+        """process_employer closes its session in a finally block even when the
+        employer's work raises (DISC-03 catch path exercised)."""
+        seed_criteria(tracking_sessionmaker, default_criteria)
+        session = tracking_sessionmaker()
+        try:
+            company = make_company(session, "BoomCo", slug="boom")
+        finally:
+            session.close()
+        run_id = start_run(tracking_sessionmaker)
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(fail_slugs={"boom"}),
+        )
+
+        result = process_employer(
+            employer_state(tracking_sessionmaker, company.id, run_id),
+            sessionmaker=tracking_sessionmaker,
+            llm_client=RecordingClient(),
+            http_client=MagicMock(),
+        )["employer_results"][0]
+
+        assert result["error"] is not None
+        assert TrackingSession.closed, "no session was ever closed"
 
     def test_fan_out_returns_send_per_employer(self):
         """fan_out_to_employers returns one Send per enabled employer."""
         from langgraph.types import Send
-        
+
         state: DiscoveryState = {
-            "run_id": "test",
-            "criteria_version": 1,
-            "no_score": False,
-            "company_ids": ["a", "b", "c"],
-            "employer_results": [],
-            "errors": [],
+            "run_id": "run", "criteria_version": 1, "no_score": False,
+            "company_ids": ["a", "b", "c"], "employer_results": [], "errors": [],
         }
-        
         sends = fan_out_to_employers(state)
-        
+
         assert len(sends) == 3
         assert all(isinstance(s, Send) for s in sends)
+        assert all(s.node == "process_employer" for s in sends)
+        assert [s.arg["company_id"] for s in sends] == ["a", "b", "c"]
 
     def test_fan_out_empty_when_no_employers(self):
         """fan_out_to_employers returns [] when there are no enabled employers."""
         state: DiscoveryState = {
-            "run_id": "test",
-            "criteria_version": 1,
-            "no_score": False,
-            "company_ids": [],
-            "employer_results": [],
-            "errors": [],
+            "run_id": "run", "criteria_version": 1, "no_score": False,
+            "company_ids": [], "employer_results": [], "errors": [],
         }
-        
-        sends = fan_out_to_employers(state)
-        
-        assert sends == []
+        assert fan_out_to_employers(state) == []
 
-    def test_load_employers_returns_company_ids(self, sessionmaker):
-        """load_employers returns company_ids for enabled employers."""
+    def test_load_employers_returns_enabled_only(self, sessionmaker):
+        """load_employers returns ids for enabled companies only."""
         session = sessionmaker()
-        
-        # Create test companies
-        for name in ["Enabled1", "Enabled2", "Disabled"]:
-            company = Company(
-                id=uuid.uuid4(),
-                name=name,
-                enabled=(not name.startswith("Disabled")),
-            )
-            session.add(company)
-        session.commit()
-        
-        state = {}
-        result = load_employers(state, sessionmaker=sessionmaker)
-        
-        assert "company_ids" in result
-        assert len(result["company_ids"]) == 2  # Only enabled
-        
-        session.close()
+        try:
+            make_company(session, "Enabled1", enabled=True)
+            make_company(session, "Enabled2", enabled=True)
+            make_company(session, "Disabled", enabled=False)
+        finally:
+            session.close()
 
+        result = load_employers({}, sessionmaker=sessionmaker)
+
+        assert len(result["company_ids"]) == 2
+
+    def test_run_status_zero_employers_is_success(self):
+        """A run with zero employers is a clean SUCCESS, not an error."""
+        assert run_status([]) is RunStatus.SUCCESS
+
+
+# ---------------------------------------------------------------------------
+# Task 2: StateGraph assembly, RetryPolicy, bounded concurrency, entrypoint
+# ---------------------------------------------------------------------------
 
 class TestGraph:
-    """Task 2: StateGraph assembly, RetryPolicy, bounded concurrency."""
+    """Graph-level behaviour: assembly, retry policy, concurrency, run lifecycle."""
 
-    def test_build_graph_returns_compiled_graph(self, sessionmaker, llm_client, http_client, static_fetcher, rendered_fetcher):
-        """build_graph returns a compiled graph with expected nodes."""
+    def test_build_graph_returns_compiled_graph(self, sessionmaker):
+        """build_graph compiles with load_employers, process_employer, finalize_run."""
         from huntloop.graph.build import build_graph
-        
+
         graph = build_graph(
             sessionmaker=sessionmaker,
-            llm_client=llm_client,
-            http_client=http_client,
-            static_fetcher=static_fetcher,
-            rendered_fetcher=rendered_fetcher,
+            llm_client=RecordingClient(),
+            http_client=MagicMock(),
         )
-        
-        nodes = graph.get_graph().nodes
-        assert "load_employers" in nodes
-        assert "process_employer" in nodes
-        assert "finalize_run" in nodes
 
-    def test_process_employer_has_retry_policy(self, sessionmaker, llm_client, http_client, static_fetcher, rendered_fetcher):
-        """The process_employer node is registered with a RetryPolicy."""
-        from huntloop.graph.build import build_graph
+        node_names = set(graph.get_graph().nodes)
+        assert {"load_employers", "process_employer", "finalize_run"} <= node_names
+
+    def test_process_employer_registered_with_retry_policy(self, sessionmaker):
+        """The process_employer node carries a RetryPolicy with max_attempts >= 2
+        (registered via the compiled graph's node spec)."""
         from langgraph.types import RetryPolicy
-        
-        # Build the graph and verify RetryPolicy is attached
-        # This requires inspecting the builder's node spec
-        pass
 
-    def test_run_discovery_returns_run_summary(self, sessionmaker, llm_client, http_client):
-        """run_discovery with three employers returns a RunSummary."""
+        from huntloop.graph.build import build_graph
+
+        graph = build_graph(
+            sessionmaker=sessionmaker,
+            llm_client=RecordingClient(),
+            http_client=MagicMock(),
+        )
+        policies = graph.nodes["process_employer"].retry_policy
+        assert policies, "process_employer registered without a retry policy"
+        assert isinstance(policies[0], RetryPolicy)
+        assert policies[0].max_attempts >= 2
+
+    def test_run_discovery_returns_run_summary(self, sessionmaker, default_criteria, monkeypatch):
+        """run_discovery over three employers: RunSummary totals equal the sum of
+        the employer results, and finalize_run stamped the same totals on the Run row."""
         from huntloop.graph.build import run_discovery
-        
+
+        seed_criteria(sessionmaker, default_criteria)
         session = sessionmaker()
-        
-        # Create 3 companies
-        for i in range(3):
-            company = Company(
-                id=uuid.uuid4(),
-                name=f"Company{i}",
-                enabled=True,
-                ats="greenhouse",
-                ats_identifier=f"company{i}",
-                resolved_at=datetime.now(timezone.utc),
-            )
-            session.add(company)
-        session.commit()
-        session.close()
-        
-        # Run discovery
-        summary = run_discovery(sessionmaker=sessionmaker, llm_client=llm_client)
-        
-        # Verify summary fields
-        assert summary.run_id is not None
+        try:
+            for i in range(3):
+                make_company(session, f"Co{i}", slug=f"co{i}")
+        finally:
+            session.close()
+
+        listings = {f"co{i}": [make_listing(f"co{i}-1")] for i in range(3)}
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug=listings),
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP] * 3, scoring=[dims_response(4)] * 3)
+
+        summary = run_discovery(sessionmaker=sessionmaker, llm_client=client,
+                                http_client=MagicMock())
+
         assert summary.companies_checked == 3
+        assert summary.listings_fetched == 3
+        assert summary.after_dedup == 3
+        assert summary.after_deterministic == 3
+        assert summary.after_triage == 3
+        assert summary.scored == 3
+        assert summary.new_jobs_written == 3
+        assert summary.updated == 0
+        assert summary.failed == 0
+        assert summary.errors == ()
+        assert summary.status == "success"
+        assert summary.tokens_in == 60 and summary.tokens_out == 120
 
-    def test_max_concurrency_from_config(self, sessionmaker, llm_client, http_client):
-        """run_discovery passes max_concurrency from Config."""
-        from huntloop.graph.build import run_discovery
-        
-        config = load_config()
-        
-        # Verify the config value is passed to graph.invoke
-        # Need to mock or capture the invoke call
-        pass
+        # finalize_run wrote the same totals to the Run row.
+        run = get_run(sessionmaker, uuid.UUID(summary.run_id))
+        assert run.status is RunStatus.SUCCESS
+        assert run.listings_fetched == 3
+        assert run.scored == 3
+        assert run.new_jobs_written == 3
+        assert run.finished_at is not None
 
-    def test_run_discovery_zero_employers(self, sessionmaker):
-        """run_discovery with zero enabled employers returns zero-count summary."""
+    def test_max_concurrency_from_config(self, sessionmaker, default_criteria, monkeypatch):
+        """run_discovery passes Config.max_employer_concurrency (or an explicit
+        override) into the graph invoke's config."""
+        import huntloop.graph.build as build_mod
         from huntloop.graph.build import run_discovery
-        from huntloop.db.repository import RunRepository
-        
-        session = sessionmaker()
-        
-        # No enabled companies
-        summary = run_discovery(sessionmaker=sessionmaker)
-        
+
+        seed_criteria(sessionmaker, default_criteria)
+
+        captured: dict = {}
+
+        class FakeGraph:
+            def invoke(self, state, config=None):
+                captured["config"] = config
+                return state
+
+        monkeypatch.setattr(build_mod, "build_graph", lambda **kwargs: FakeGraph())
+
+        # Explicit override wins.
+        run_discovery(sessionmaker=sessionmaker, llm_client=object(),
+                      http_client=MagicMock(), concurrency=7)
+        assert captured["config"] == {"max_concurrency": 7}
+
+        # Default: from Config.max_employer_concurrency, never hardcoded.
+        run_discovery(sessionmaker=sessionmaker, llm_client=object(),
+                      http_client=MagicMock())
+        assert captured["config"] == {"max_concurrency": load_config().max_employer_concurrency}
+
+    def test_run_discovery_zero_employers(self, sessionmaker, default_criteria,
+                                          credentials_engine, monkeypatch):
+        """A run with zero enabled employers finishes cleanly: zero counters,
+        terminal status, no exception."""
+        from huntloop.graph.build import run_discovery
+
+        seed_criteria(sessionmaker, default_criteria)
+        # The LLM client is still built (no_score is False) even though nothing
+        # will use it -- give resolve_llm_api_key a key to find.
+        monkeypatch.setenv("HUNTLOOP_OPENAI_API_KEY", "sk-test-only")
+
+        summary = run_discovery(sessionmaker=sessionmaker, http_client=MagicMock())
+
         assert summary.companies_checked == 0
         assert summary.listings_fetched == 0
+        assert summary.new_jobs_written == 0
+        assert summary.scored == 0
         assert summary.status == "success"
-        
-        # Verify run was still created and finished
-        repo = RunRepository(session)
-        run = repo.get(uuid.UUID(summary.run_id))
-        assert run is not None
-        assert run.status == RunStatus.SUCCESS
-        
-        session.close()
+        assert summary.errors == ()
 
-    def test_run_discovery_creates_one_run_row(self, sessionmaker):
-        """run_discovery creates exactly one Run row and finishes it."""
+        run = get_run(sessionmaker, uuid.UUID(summary.run_id))
+        assert run is not None
+        assert run.status is RunStatus.SUCCESS
+        assert run.finished_at is not None
+
+    def test_run_discovery_all_employers_error_finishes_run(self, sessionmaker, default_criteria, monkeypatch):
+        """Even when EVERY employer errors there is exactly one Run row and it
+        finishes with a terminal status -- never stuck in 'running'."""
         from huntloop.graph.build import run_discovery
-        
+
+        seed_criteria(sessionmaker, default_criteria)
         session = sessionmaker()
-        
-        # Run with no employers (cleanest test)
-        summary = run_discovery(sessionmaker=sessionmaker)
-        
-        # Count run rows for this run_id
-        count = session.execute(
-            select(Run).where(Run.id == uuid.UUID(summary.run_id))
-        ).scalar_one_or_none()
-        
-        assert count is not None
-        
-        session.close()
+        try:
+            for i in range(2):
+                make_company(session, f"Down{i}", slug=f"down{i}")
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(fail_slugs={"down0", "down1"}),
+        )
+
+        summary = run_discovery(sessionmaker=sessionmaker, llm_client=object(),
+                                http_client=MagicMock())
+
+        assert summary.companies_checked == 2
+        assert len(summary.errors) == 2
+        assert summary.status == "failed"
+
+        session = sessionmaker()
+        try:
+            runs = list(session.execute(select(Run)).scalars())
+            assert len(runs) == 1
+            assert runs[0].status is RunStatus.FAILED
+            assert runs[0].finished_at is not None
+            assert runs[0].error_summary is not None
+        finally:
+            session.close()
+
+    def test_run_discovery_partial_failure_error_summary(self, sessionmaker, default_criteria, monkeypatch):
+        """A partially-failed run reports per-employer errors by name and stage."""
+        from huntloop.graph.build import run_discovery
+
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            make_company(session, "AliveCo", slug="alive")
+            make_company(session, "DeadCo", slug="dead")
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(
+                listings_by_slug={"alive": [make_listing("alive-1")]},
+                fail_slugs={"dead"},
+            ),
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+
+        summary = run_discovery(sessionmaker=sessionmaker, llm_client=client,
+                                http_client=MagicMock())
+
+        assert summary.status == "partial"
+        assert summary.scored == 1
+        assert len(summary.errors) == 1
+        assert summary.errors[0]["company"] == "DeadCo"
+        assert summary.errors[0]["stage"] == "fetch"
+        assert "simulated 500" in summary.errors[0]["message"]
 
     def test_run_discovery_no_active_criteria_raises(self, sessionmaker):
-        """run_discovery raises if no active criteria exist."""
-        from huntloop.graph.build import run_discovery, NoActiveCriteria
-        
-        session = sessionmaker()
-        
-        # Ensure no criteria rows
-        from huntloop.db.models import Criteria
-        session.execute("DELETE FROM criteria")
-        session.commit()
-        
-        with pytest.raises(NoActiveCriteria):
-            run_discovery(sessionmaker=sessionmaker)
-        
-        # Verify no Run row was created
-        count = session.execute(select(Run)).scalars().all()
-        assert len(count) == 0
-        
-        session.close()
+        """No active criteria -> named error raised BEFORE a Run row is created."""
+        from huntloop.graph.build import NoActiveCriteria, run_discovery
 
-    def test_run_discovery_no_score_zero_model_calls(self, sessionmaker, llm_client):
-        """run_discovery(no_score=True) produces zero model calls."""
+        session = sessionmaker()
+        try:
+            assert session.execute(select(Criteria)).scalars().first() is None
+        finally:
+            session.close()
+
+        with pytest.raises(NoActiveCriteria, match="no active criteria"):
+            run_discovery(sessionmaker=sessionmaker, http_client=MagicMock())
+
+        session = sessionmaker()
+        try:
+            assert list(session.execute(select(Run)).scalars()) == []
+        finally:
+            session.close()
+
+    def test_run_discovery_no_score_builds_no_llm_client(self, sessionmaker, default_criteria, monkeypatch):
+        """--no-score builds NO LLM client at all (works with no API key
+        configured) and makes zero model calls end to end."""
+        import huntloop.graph.build as build_mod
         from huntloop.graph.build import run_discovery
-        
-        # Run with --no-score
-        summary = run_discovery(sessionmaker=sessionmaker, no_score=True)
-        
+
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            make_company(session, "FreshCo", slug="fresh")
+        finally:
+            session.close()
+
+        # Fail loudly if any code path builds an LM client under --no-score:
+        # run_discovery imports get_llm_client lazily, so patch the defining module.
+        import huntloop.llm.client as llm_client_mod
+
+        monkeypatch.setattr(
+            llm_client_mod, "get_llm_client",
+            lambda *a, **k: pytest.fail("LLM client built under --no-score"),
+        )
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(
+                listings_by_slug={"fresh": [make_listing("fresh-1")]}
+            ),
+        )
+
+        summary = run_discovery(sessionmaker=sessionmaker, no_score=True,
+                                http_client=MagicMock())
+
         assert summary.scored == 0
         assert summary.tokens_in == 0
         assert summary.tokens_out == 0
+        assert summary.new_jobs_written == 1
+        assert summary.status == "success"
 
     def test_run_summary_fields_match_cli_rendering(self):
-        """RunSummary exposes the exact fields 02-11 renders."""
+        """RunSummary exposes the exact fields 02-11 renders, verbatim."""
         from huntloop.graph.build import RunSummary
-        import dataclasses
-        
+
         fields = {f.name for f in dataclasses.fields(RunSummary)}
-        
         expected = {
             "run_id",
             "companies_checked",
@@ -424,86 +996,110 @@ class TestGraph:
             "cost_usd",
             "errors",
             "status",
+            "top_listings",
         }
-        
         assert fields == expected
 
-    def test_graph_invoked_synchronously(self, sessionmaker, llm_client, http_client):
-        """run_discovery contains no await and no asyncio.run."""
-        from huntloop.graph import build
-        import inspect
-        
-        source = inspect.getsource(build.run_discovery)
-        
-        assert "await" not in source
+    def test_graph_invoked_synchronously(self):
+        """run_discovery contains no async machinery: no await, no asyncio,
+        no asynchronous invoke."""
+        import huntloop.graph.build as build_mod
+
+        source = inspect.getsource(build_mod.run_discovery)
+        assert "await " not in source
         assert "asyncio" not in source
         assert "ainvoke" not in source
+        assert not inspect.iscoroutinefunction(build_mod.run_discovery)
 
-    def test_consecutive_runs_write_then_update(self, sessionmaker, llm_client, http_client):
-        """Two consecutive runs over same data: first writes, second updates."""
+    def test_consecutive_runs_write_then_update(self, sessionmaker, default_criteria, monkeypatch):
+        """DISC-06 end to end: the same fixture data writes on the first run and
+        updates on the second -- never duplicates."""
         from huntloop.graph.build import run_discovery
-        
+
+        seed_criteria(sessionmaker, default_criteria)
         session = sessionmaker()
-        
-        # Create a company
-        company = Company(
-            id=uuid.uuid4(),
-            name="TestCo",
-            enabled=True,
-            ats="greenhouse",
-            ats_identifier="testco",
-            resolved_at=datetime.now(timezone.utc),
+        try:
+            make_company(session, "TwiceCo", slug="twice")
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"twice": [make_listing("twice-1")]}),
         )
-        session.add(company)
-        session.commit()
-        
-        # First run
-        summary1 = run_discovery(sessionmaker=sessionmaker, llm_client=llm_client)
-        assert summary1.new_jobs_written > 0
-        assert summary1.updated == 0
-        
-        # Second run (same data)
-        summary2 = run_discovery(sessionmaker=sessionmaker, llm_client=llm_client)
-        assert summary2.new_jobs_written == 0
-        assert summary2.updated > 0
-        
-        session.close()
 
+        first = run_discovery(
+            sessionmaker=sessionmaker, llm_client=RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)]),
+            http_client=MagicMock(),
+        )
+        assert first.new_jobs_written == 1
+        assert first.updated == 0
 
-# Fixtures
-@pytest.fixture
-def sessionmaker(self, portable_engine):
-    """Session factory for tests."""
-    from sqlalchemy.orm import sessionmaker as sm
-    return sm(bind=portable_engine)
+        second = run_discovery(
+            sessionmaker=sessionmaker, llm_client=RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)]),
+            http_client=MagicMock(),
+        )
+        assert second.new_jobs_written == 0
+        assert second.updated == 1
 
+    def test_top_listings_best_first(self, sessionmaker, default_criteria, monkeypatch):
+        """top_listings carries this run's scored jobs, best score first."""
+        from huntloop.graph.build import run_discovery
 
-@pytest.fixture
-def llm_client(self):
-    """Mock LLM client."""
-    from unittest.mock import MagicMock
-    
-    client = MagicMock()
-    client.usage = LlmUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
-    return client
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            make_company(session, "RankCo", slug="rank")
+        finally:
+            session.close()
 
+        strong = make_listing("rank-strong", title="Principal Engineer")
+        weak = make_listing("rank-weak", title="Junior Support")
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"rank": [strong, weak]}),
+        )
+        # strong scores 5s, weak scores 3s.
+        client = RecordingClient(triage=[TRIAGE_KEEP, TRIAGE_KEEP], scoring=[dims_response(5), dims_response(3)])
 
-@pytest.fixture
-def http_client(self):
-    """Mock HTTP client."""
-    from unittest.mock import MagicMock
-    return MagicMock()
+        summary = run_discovery(sessionmaker=sessionmaker, llm_client=client,
+                                http_client=MagicMock())
 
+        assert summary.scored == 2
+        assert len(summary.top_listings) == 2
+        assert summary.top_listings[0]["title"] == "Principal Engineer"
+        assert float(summary.top_listings[0]["score"]) > float(summary.top_listings[1]["score"])
 
-@pytest.fixture
-def static_fetcher(self):
-    """Mock static page fetcher."""
-    from unittest.mock import MagicMock
-    return MagicMock()
+    def test_finalize_run_sums_counters_and_finishes(self, sessionmaker, default_criteria):
+        """finalize_run sums every counter across employer_results and writes
+        them to the Run row with a terminal status."""
+        seed_criteria(sessionmaker, default_criteria)
+        run_id = start_run(sessionmaker)
 
+        results: list[EmployerResult] = [
+            {"company_id": "a", "company_name": "A", "fetched": 3, "after_dedup": 2,
+             "after_deterministic": 2, "after_triage": 1, "scored": 1, "written": 2,
+             "updated": 0, "failed": 0, "tokens_in": 20, "tokens_out": 40},
+            {"company_id": "b", "company_name": "B", "fetched": 1, "after_dedup": 1,
+             "after_deterministic": 1, "after_triage": 1, "scored": 1, "written": 1,
+             "updated": 1, "failed": 1, "tokens_in": 10, "tokens_out": 20,
+             "error": "RuntimeError: x", "stage": "score"},
+        ]
+        finalize_run(
+            {"run_id": str(run_id), "employer_results": results},
+            sessionmaker=sessionmaker,
+        )
 
-@pytest.fixture
-def rendered_fetcher(self):
-    """Mock rendered page fetcher."""
-    from unittest.mock import MagicMock
-    return MagicMock()
+        run = get_run(sessionmaker, run_id)
+        assert run.status is RunStatus.PARTIAL
+        assert run.companies_checked == 2
+        assert run.listings_fetched == 4
+        assert run.after_dedup == 3
+        assert run.after_deterministic == 3
+        assert run.after_triage == 2
+        assert run.scored == 2
+        assert run.new_jobs_written == 3
+        assert run.tokens_in == 30
+        assert run.tokens_out == 60
+        assert run.finished_at is not None
+        assert "B@score" in run.error_summary
