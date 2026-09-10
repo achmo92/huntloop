@@ -1,0 +1,40 @@
+# HuntLoop criteria. Copy to criteria.yml and edit, then: huntloop criteria load criteria.yml
+# Every load writes a NEW version — the previous version is never overwritten.
+
+profile_summary: >
+  Ten years building backend and data platforms; wants deep systems work with
+  real ownership, not people management. Prefers small, product-led companies.
+
+seniority_min: senior
+seniority_max: principal
+
+# Listings older than this are rejected before any model is called (SCOR-01).
+posting_age_days: 30
+
+locations:
+  eligible_countries: [IN, US]     # ISO-3166 alpha-2
+  eligible_regions: [EMEA]         # EMEA | APAC | LATAM | NA | EU
+  preferred_cities: [Bengaluru, Remote]
+
+# No currency conversion happens, ever. A listing quoted in another currency is
+# flagged not-comparable and still scored — the floor simply does not apply.
+compensation_floor:
+  amount: 4000000
+  currency: INR
+  period: annual
+
+exclusions:
+  title_keywords: [intern, "sales engineer", recruiter]
+  employers: ["Some Agency Ltd"]
+
+work_authorization:
+  countries_authorized: [IN]
+  requires_sponsorship: false
+
+# Relative weights; they do not need to sum to 1. Unassessable dimensions are
+# renormalised away rather than replaced with a neutral value (SCOR-08).
+dimension_weights:
+  role_fit: 0.40
+  seniority_fit: 0.20
+  employer_fit: 0.15
+  trajectory: 0.25
