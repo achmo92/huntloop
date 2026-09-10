@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from huntloop.db.models import Company, Job, JobStatus, Setting, StatusEvent, StatusEventSource
+from huntloop.db.models import Company, Job, JobStatus, Run, RunError, RunStatus, RunTrigger, Setting, StatusEvent, StatusEventSource
 from huntloop.db.upsert import upsert
 
 # Discovery-owned columns on `jobs`: refreshed on every re-discovery of the
@@ -42,6 +42,9 @@ JOB_DISCOVERY_OWNED_COLUMNS: list[str] = [
     "comp_currency",
     "comp_period",
     "work_auth_required",
+    "filter_tier_reached",
+    "source_run_id",
+    "first_seen_at",
 ]
 
 # Registry-owned columns on `companies`. EXCLUDES `enabled` (user-owned:
@@ -268,3 +271,85 @@ class SettingsRepository:
     def is_secret(self, key: str) -> bool:
         setting = self.session.get(Setting, key)
         return bool(setting.is_secret) if setting is not None else False
+
+
+class RunRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def start(self, trigger: RunTrigger) -> Run:
+        run = Run(
+            id=uuid.uuid4(),
+            trigger=trigger,
+            status=RunStatus.RUNNING,
+            started_at=datetime.now(UTC),
+            companies_checked=0,
+            listings_fetched=0,
+            after_dedup=0,
+            after_deterministic=0,
+            after_triage=0,
+            scored=0,
+            new_jobs_written=0,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0,
+        )
+        self.session.add(run)
+        self.session.flush()
+        return run
+
+    def record_error(self, run_id: uuid.UUID, company_id: uuid.UUID, stage: str, message: str) -> RunError:
+        error = RunError(
+            id=uuid.uuid4(),
+            run_id=run_id,
+            company_id=company_id,
+            stage=stage,
+            message=message[:2000],  # truncate to prevent bloat
+        )
+        self.session.add(error)
+        self.session.flush()
+        return error
+
+    def finish(
+        self,
+        run_id: uuid.UUID,
+        *,
+        status: RunStatus,
+        companies_checked: int,
+        listings_fetched: int,
+        after_dedup: int,
+        after_deterministic: int,
+        after_triage: int,
+        scored: int,
+        new_jobs_written: int,
+        tokens_in: int,
+        tokens_out: int,
+        cost_usd: float,
+        error_summary: str | None = None,
+    ) -> Run:
+        run = self.session.get(Run, run_id)
+        run.status = status
+        run.companies_checked = companies_checked
+        run.listings_fetched = listings_fetched
+        run.after_dedup = after_dedup
+        run.after_deterministic = after_deterministic
+        run.after_triage = after_triage
+        run.scored = scored
+        run.new_jobs_written = new_jobs_written
+        run.tokens_in = tokens_in
+        run.tokens_out = tokens_out
+        run.cost_usd = cost_usd
+        if error_summary is not None:
+            run.error_summary = error_summary
+        run.finished_at = datetime.now(UTC)
+        return run
+
+    def get(self, run_id: uuid.UUID) -> Run | None:
+        return self.session.get(Run, run_id)
+
+    def list_recent(self, limit: int = 10) -> list[Run]:
+        return list(
+            self.session.execute(
+                select(Run).order_by(Run.started_at.desc()).limit(limit)
+            ).scalars()
+        )
