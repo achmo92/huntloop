@@ -2,6 +2,15 @@ import os
 import pytest
 from huntloop.config import load_config, ConfigError
 
+
+@pytest.fixture(autouse=True)
+def no_dotenv(monkeypatch):
+    """Isolate from a developer's .env: load_config() loads it (by design),
+    which would re-supply defaults under test. find_dotenv walks up from the
+    calling module's directory, so chdir alone cannot escape it."""
+    monkeypatch.setattr("huntloop.config.dotenv.load_dotenv", lambda *a, **k: False)
+
+
 def test_openai_base_url_default(monkeypatch):
     monkeypatch.delenv("HUNTLOOP_OPENAI_BASE_URL", raising=False)
     config = load_config()

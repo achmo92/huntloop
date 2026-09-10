@@ -21,9 +21,13 @@ from huntloop.credentials.store import CredentialDecryptError, CredentialStore
 from huntloop.db.repository import SettingsRepository
 
 
-def test_missing_secret_key_fails_fast(monkeypatch):
+def test_missing_secret_key_fails_fast(monkeypatch, tmp_path):
     from huntloop.config import load_config
 
+    # A developer's .env must not re-supply HUNTLOOP_SECRET_KEY here:
+    # find_dotenv walks up from the calling module's directory, so the only
+    # reliable isolation is to no-op the dotenv load.
+    monkeypatch.setattr("huntloop.config.dotenv.load_dotenv", lambda *a, **k: False)
     monkeypatch.delenv("HUNTLOOP_SECRET_KEY", raising=False)
     try:
         load_config()
@@ -74,7 +78,7 @@ def test_main_db_file_contains_no_plaintext_credential(
             assert stored_ciphertext not in raw, p
 
 
-def test_credentials_file_is_ciphertext_only(credentials_session, credentials_db_path, monkeypatch):
+def test_credentials_file_is_ciphertext_only(credentials_session, credentials_db_path, monkeypatch, tmp_path):
     secret = "sk-test-abc123-do-not-leak"
 
     store = CredentialStore(credentials_session)
@@ -105,6 +109,8 @@ def test_credentials_file_is_ciphertext_only(credentials_session, credentials_db
     assert found_ciphertext
 
     # Without the key, decrypting must raise rather than return plaintext.
+    # No-op the dotenv load so a developer's .env cannot re-supply the key.
+    monkeypatch.setattr("huntloop.config.dotenv.load_dotenv", lambda *a, **k: False)
     monkeypatch.delenv("HUNTLOOP_SECRET_KEY", raising=False)
     with pytest.raises(ConfigError):
         CredentialStore(credentials_session)
