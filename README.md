@@ -78,8 +78,9 @@ Migrations run automatically via the `migrate` Compose service, so these are onl
 
 3. Load your criteria into the database:
    ```bash
-   docker compose run --rm app criteria load /data/criteria.yml
+   docker compose run --rm -v "$(pwd)/criteria.yml:/data/criteria.yml" app criteria load /data/criteria.yml
    ```
+   The `-v` flag is required: `/data` inside the container is a named Docker volume (it holds the databases), not a bind mount of your working directory, so the file must be mounted in explicitly.
    (Outside Docker, the same command is `huntloop criteria load criteria.yml` — it prints the new version number.)
 
 4. Add an employer to track:
