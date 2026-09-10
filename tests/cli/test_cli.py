@@ -218,7 +218,7 @@ class TestRunCommand:
         assert "fetched: 5" in out
         
     def test_run_partial(self, capsys, mock_run_discovery):
-        mock_run_discovery.errors = [{"company_name": "Test", "stage": "fetch", "error": "boom"}]
+        mock_run_discovery.errors = [{"company": "Test", "stage": "fetch", "message": "boom"}]
         assert main(["run"]) == EXIT_PARTIAL
         out, _ = capsys.readouterr()
         assert "[Test] fetch: boom" in out

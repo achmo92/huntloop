@@ -35,7 +35,7 @@ def render_run_human(summary) -> str:
         lines.append("")
         lines.append("Errors:")
         for err in summary.errors:
-            lines.append(f"  - [{err.get('company_name', 'Unknown')}] {err.get('stage', 'unknown')}: {err.get('error', '')}")
+            lines.append(f"  - [{err.get('company', 'Unknown')}] {err.get('stage', 'unknown')}: {err.get('message', '')}")
             
     lines.append("")
     lines.append(f"Tokens in: {summary.tokens_in}")
