@@ -1,3 +1,4 @@
+import decimal
 import json
 import pytest
 from pathlib import Path
@@ -297,6 +298,97 @@ class TestRunCommand:
         for attr, _ in RUN_FIELDS:
             assert attr in data
         assert data["cost_usd"] == 10.50
+
+class TestRunHistoryRender:
+    """03-05 Task 1: render_run_history_human / render_run_history_json.
+
+    Renderer-only tests -- plain SimpleNamespace rows, no DB. The imports are
+    deliberately inside the methods until the renderers exist (TDD RED keeps
+    the rest of the file collectable).
+    """
+
+    def _run(self, **overrides):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        from huntloop.db.models import RunStatus, RunTrigger
+
+        base = dict(
+            id="00000000-0000-0000-0000-000000000001",
+            started_at=datetime(2026, 9, 10, 8, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 9, 10, 8, 5, tzinfo=timezone.utc),
+            trigger=RunTrigger.SCHEDULED,
+            status=RunStatus.SUCCESS,
+            companies_checked=2,
+            listings_fetched=10,
+            after_dedup=9,
+            after_deterministic=7,
+            after_triage=5,
+            scored=5,
+            new_jobs_written=3,
+            tokens_in=1200,
+            tokens_out=2400,
+            cost_usd=decimal.Decimal("0.0123"),
+            error_summary=None,
+        )
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_run_history_empty_message(self):
+        from huntloop.cli.render import render_run_history_human
+
+        out = render_run_history_human([])
+        assert "no runs recorded" in out
+        # An empty history states the fact -- it must not print an empty table.
+        assert out.count("\n") == 0
+
+    def test_run_history_human_shows_trigger_status_and_cost(self):
+        from huntloop.cli.render import render_run_history_human
+
+        out = render_run_history_human([self._run()])
+        assert "2026-09-10 08:00" in out
+        assert "scheduled" in out
+        assert "success" in out
+        assert "written=3" in out
+        assert "$0.0123" in out
+
+    def test_run_history_human_null_cost_renders_zero(self):
+        from huntloop.cli.render import render_run_history_human
+
+        out = render_run_history_human([self._run(cost_usd=None)])
+        assert "$0.0000" in out
+
+    def test_run_history_human_shows_skip_reason(self):
+        from huntloop.cli.render import render_run_history_human
+
+        from huntloop.db.models import RunStatus
+
+        run = self._run(
+            status=RunStatus.SKIPPED,
+            error_summary="skipped: a previous run was still in progress\nsecond line",
+        )
+        out = render_run_history_human([run])
+        assert "skipped" in out
+        assert "skipped: a previous run was still in progress" in out
+
+    def test_run_history_json_matches_field_list(self):
+        from huntloop.cli.render import RUN_HISTORY_FIELDS, render_run_history_json
+
+        out = render_run_history_json([self._run()])
+        data = json.loads(out)
+        assert isinstance(data, list) and len(data) == 1
+        field_names = {name for name, _ in RUN_HISTORY_FIELDS}
+        assert field_names <= set(data[0].keys())
+
+    def test_run_history_json_cost_has_no_float_artifact(self):
+        from huntloop.cli.render import render_run_history_json
+
+        out = render_run_history_json([self._run(cost_usd=decimal.Decimal("0.0123"))])
+        # Assert on the raw string: the whole point is that the serialized
+        # number never shows a float-repr artifact.
+        assert "0.0123" in out
+        assert "0.012300000000000001" not in out
+
 
 class TestJobsCommand:
     def test_jobs_list_empty(self, capsys, main_session):
