@@ -78,7 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser_jobs_list.add_argument("--json", action="store_true", help="Output JSON")
     parser_jobs_list.add_argument("--flagged", action="store_true", help="Only show flagged jobs")
     parser_jobs_list.set_defaults(func=cmd_jobs_list)
-    
+
+    # scheduler
+    from huntloop.cli.scheduler import cmd_scheduler_start
+
+    parser_scheduler = subparsers.add_parser(
+        "scheduler", help="Run discovery unattended on a schedule"
+    )
+    scheduler_sub = parser_scheduler.add_subparsers(dest="scheduler_command", required=True)
+    parser_scheduler_start = scheduler_sub.add_parser(
+        "start", help="Start the blocking daily scheduler (runs until stopped)"
+    )
+    parser_scheduler_start.set_defaults(func=cmd_scheduler_start)
+
     return parser
 
 

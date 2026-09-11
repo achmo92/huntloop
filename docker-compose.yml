@@ -65,5 +65,24 @@ services:
       - data:/data
     restart: "no"
 
+  # The only long-running service in the stack. `restart: unless-stopped` (rather
+  # than the one-shot services' `restart: "no"`) is what makes RUN-04 catch-up
+  # observable: the container comes back after a host restart and APScheduler
+  # finds a past-due next_run_time waiting in the shared data volume.
+  # No browser, no display, no X server (OPS-02) -- the scheduler never renders;
+  # the crawl path inside a run launches Chromium headless, as Phase 2 already does.
+  scheduler:
+    build: .
+    image: huntloop:local
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["huntloop"]
+    command: ["scheduler", "start"]
+    environment: *huntloop-env
+    volumes:
+      - data:/data
+    restart: unless-stopped
+
 volumes:
   data:

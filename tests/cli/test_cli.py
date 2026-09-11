@@ -352,3 +352,34 @@ class TestJobsCommand:
         data = json.loads(out)
         assert len(data) >= 1
         assert data[0]["company"] == "JsonComp"
+
+class TestSchedulerCommand:
+    def test_scheduler_start_builds_and_starts(self, capsys, monkeypatch):
+        started = []
+
+        class FakeScheduler:
+            def get_job(self, job_id):
+                return None
+
+            def start(self):
+                started.append(True)
+
+        monkeypatch.setattr(
+            "huntloop.cli.scheduler.build_scheduler", lambda cfg: FakeScheduler()
+        )
+        assert main(["scheduler", "start"]) == EXIT_OK
+        assert started == [True], "scheduler.start() must be called exactly once"
+
+    def test_scheduler_start_config_error_aborts(self, capsys, monkeypatch):
+        def _raise(*args, **kwargs):
+            raise ConfigError("bad tz")
+
+        monkeypatch.setattr("huntloop.cli.scheduler.load_config", _raise)
+        assert main(["scheduler", "start"]) == EXIT_ABORTED
+        out, err = capsys.readouterr()
+        assert "bad tz" in err
+
+    def test_scheduler_subcommand_is_registered(self, capsys):
+        assert main([]) == EXIT_OK
+        out, _ = capsys.readouterr()
+        assert "scheduler" in out
