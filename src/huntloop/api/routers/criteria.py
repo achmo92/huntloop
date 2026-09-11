@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pycountry
 from datetime import datetime
+from typing import Any
 
-import openai
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -301,7 +301,10 @@ def save_criteria(
 @router.post("/describe", response_model=DescribeResult)
 def describe_criteria(
     body: DescribeRequest,
-    client: openai.OpenAI = Depends(get_llm),
+    # Duck-typed openai.OpenAI from the get_llm dependency: OPS-06 confines
+    # the openai import to huntloop/llm/client.py, and tests override get_llm
+    # with fakes anyway — a concrete type here would serve neither.
+    client: Any = Depends(get_llm),
 ) -> DescribeResult:
     """Describe-first extraction (D-01): freeform paragraph in, a
     CriteriaPayload-shaped draft out — persisted NOTHING. The draft lands in

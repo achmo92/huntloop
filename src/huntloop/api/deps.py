@@ -10,8 +10,8 @@ Session leaves a checked-out connection that blocks clean teardown.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
-import openai
 from fastapi import Depends
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -89,10 +89,15 @@ def get_credentials_session() -> Iterator[Session]:
 
 def get_llm(
     credentials_session: Session = Depends(get_credentials_session),
-) -> openai.OpenAI:
-    """Return the process-wide LLM client for this request.
+) -> Any:
+    """Return the LLM client for this request.
 
-    Overridable in tests via `app.dependency_overrides[get_llm]`, exactly like
-    the session dependencies above.
+    An `openai.OpenAI` instance built by `huntloop.llm.client.get_llm_client`.
+    Deliberately duck-typed, NOT `-> openai.OpenAI`: OPS-06 confines the
+    openai import to huntloop/llm/client.py alone (enforced by
+    tests/scoring/test_client_routing.py), so this dependency stays
+    import-free and tests override it with fakes via
+    `app.dependency_overrides[get_llm]`, exactly like the session
+    dependencies above.
     """
     return get_llm_client(credentials_session)
