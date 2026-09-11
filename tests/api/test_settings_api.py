@@ -6,28 +6,48 @@ credential store (never the settings table, never a response).
 
 from __future__ import annotations
 
+import pytest
+
+from huntloop.config import load_config
 from huntloop.credentials.store import CredentialStore
 from huntloop.db.models import Setting
 from huntloop.db.repository import SettingsRepository
 
 
-def test_get_settings_fresh_db(client, monkeypatch):
-    monkeypatch.delenv("HUNTLOOP_OPENAI_API_KEY", raising=False)
+@pytest.fixture(autouse=True)
+def _clean_settings_env(monkeypatch):
+    """Pin the env-default layer so assertions do not depend on a developer's shell."""
+    for name in (
+        "HUNTLOOP_OPENAI_BASE_URL",
+        "HUNTLOOP_TRIAGE_MODEL",
+        "HUNTLOOP_SCORING_MODEL",
+        "HUNTLOOP_EXTRACTION_MODEL",
+        "HUNTLOOP_RUN_AT",
+        "HUNTLOOP_TIMEZONE",
+        "HUNTLOOP_RUN_SPEND_CAP_USD",
+        "HUNTLOOP_OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_get_settings_fresh_db(client):
+    cfg = load_config()  # the env-default layer (a .env may legitimately supply base_url)
     resp = client.get("/api/settings")
     assert resp.status_code == 200
     body = resp.json()
     assert set(body.keys()) == {"api_access", "models", "schedule", "spend_cap"}
-    assert body["api_access"]["base_url"] == "https://api.openai.com/v1"
+    assert body["api_access"]["base_url"] == cfg.openai_base_url
     assert body["api_access"]["has_api_key"] is False
     # The key VALUE is never present anywhere in the response.
     assert "api_key" not in body["api_access"]
     assert body["models"] == {
-        "triage": "gpt-4o-mini",
-        "scoring": "gpt-4o",
-        "extraction": "gpt-4o-mini",
+        "triage": cfg.triage_model,
+        "scoring": cfg.scoring_model,
+        "extraction": cfg.extraction_model,
     }
-    assert body["schedule"] == {"run_at": "08:00", "timezone": "UTC"}
-    assert body["spend_cap"] == {"cap_usd": None}
+    assert body["schedule"] == {"run_at": cfg.run_at, "timezone": cfg.timezone}
+    expected_cap = None if cfg.run_spend_cap_usd is None else float(cfg.run_spend_cap_usd)
+    assert body["spend_cap"] == {"cap_usd": expected_cap}
 
 
 def test_put_api_access_base_url_writes_setting_row(client, make_session):
