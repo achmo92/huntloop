@@ -1,7 +1,7 @@
 """RUN-07 price table tests. Owned by plan 03-02.
 
 One test per behavior bullet in 03-02-PLAN.md Task 1. The module is imported
-directly (no importorskip): 03-02's acceptance criteria require
+directly, with no skip guard: 03-02's acceptance criteria require
 `pytest tests/pricing -q -rs` to report 0 skipped.
 """
 from decimal import Decimal
