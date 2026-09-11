@@ -48,9 +48,37 @@ def create_app() -> FastAPI:
 
     # Serve the built frontend only when it exists. The guard keeps tests and
     # bare-backend runs independent of any frontend build (plan 04-11 fills
-    # web/dist; 04-11's Dockerfile stage lands dist at the path computed here).
-    dist = Path(__file__).resolve().parents[2] / "web" / "dist"
-    if dist.is_dir():
+    # web/dist; 04-11's Dockerfile stage lands dist at /app/web/dist).
+    dist = _frontend_dist()
+    if dist is not None:
         app.mount("/", StaticFiles(directory=dist, html=True), name="web")
 
     return app
+
+
+def _frontend_dist() -> Path | None:
+    """Locate the built SPA (plan 04-11), or None when it has not been built.
+
+    Two locations are checked because the package is installed differently per
+    environment, and the Docker image is the deployment target this exists for:
+
+    - ``parents[3]/web/dist`` is the repo root in a source checkout (editable
+      installs, local ``uvicorn``/``pytest``) — ``src/huntloop/api/app.py`` is
+      three directories below the root.
+    - ``cwd/web/dist`` is where the Docker image lands the SPA. The runtime
+      stage ``pip install``s the package into site-packages (so ``__file__``
+      resolves under ``site-packages`` and the repo-root candidate misses), but
+      the image ``WORKDIR`` is ``/app`` and the node stage's output is copied to
+      ``/app/web/dist``.
+
+    The first existing match wins; a missing directory means "no frontend build
+    here" and the app serves API only, exactly as before plan 04-11.
+    """
+    candidates = (
+        Path(__file__).resolve().parents[3] / "web" / "dist",
+        Path.cwd() / "web" / "dist",
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None

@@ -1,3 +1,16 @@
+# Stage 1: build the React SPA (plan 04-11). Kept separate so the Python
+# runtime stage never carries node_modules or the Node toolchain, and so source
+# edits don't invalidate the npm layer unless package.json/package-lock.json change.
+FROM node:22-slim AS webbuild
+
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# Stage 2: the runtime image. Everything below is the pre-04-11 image verbatim
+# (the same image serves the CLI, the scheduler, and now the web API).
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -24,8 +37,13 @@ COPY alembic.ini ./
 COPY migrations ./migrations
 COPY scripts ./scripts
 
+# The built SPA, at /app/web/dist — the location the `web` Compose service's
+# uvicorn process (WORKDIR /app) serves same-origin via create_app().
+COPY --from=webbuild /web/dist ./web/dist
+
 RUN mkdir -p /data
 VOLUME ["/data"]
 
 # Deliberately no default CMD: this one image serves the one-shot `migrate`
-# service, the dev `probe`, and the `app` service, each supplying its own command.
+# service, the dev `probe`, the one-shot `app` CLI runner, the long-running
+# `scheduler`, and the `web` service, each supplying its own command.

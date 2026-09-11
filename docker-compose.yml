@@ -84,5 +84,28 @@ services:
       - data:/data
     restart: unless-stopped
 
+  # The browser surface (OPS-01/UI-01): FastAPI serves the SPA baked into the
+  # image's /app/web/dist same-origin at "/", plus the /api tree. Same image as
+  # migrate/scheduler/app, so Playwright and the crawl path are available to
+  # diagnostics/employer-fetch without a second build.
+  # `--workers 1` is required, not a default to tune: multiple Uvicorn workers
+  # each start their own in-process scheduler and duplicate runs silently
+  # (STACK.md). The private-network trust model means binding 0.0.0.0 is the
+  # point — any device on the host's network reaches it, with no auth ceremony.
+  web:
+    build: .
+    image: huntloop:local
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: []
+    command: ["uvicorn", "huntloop.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    ports:
+      - "8000:8000"
+    environment: *huntloop-env
+    volumes:
+      - data:/data
+    restart: unless-stopped
+
 volumes:
   data:
