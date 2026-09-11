@@ -41,6 +41,7 @@ class _ScoreBatchOut:
     after_deterministic: int = 0
     after_triage: int = 0
     scored: int = 0
+    scoring_failed: int = 0
 
 
 def load_employers(state, *, sessionmaker: sessionmaker) -> dict:
@@ -149,6 +150,7 @@ def process_employer(
         result["scored"] = scored_batch.scored
         result["tokens_in"] = scored_batch.tokens_in
         result["tokens_out"] = scored_batch.tokens_out
+        result["failed"] += scored_batch.scoring_failed
 
         stage = "write"
         outcome = write_batch(
@@ -299,6 +301,7 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None) -> _ScoreBa
     after_deterministic = 0
     after_triage = 0
     scored_count = 0
+    scoring_failed = 0
 
     for listing in listings:
         if state.get("no_score"):
@@ -322,6 +325,12 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None) -> _ScoreBa
                 after_triage += 1
             if s.scored:
                 scored_count += 1
+            if s.error:
+                # A listing that survived triage but whose dimension call
+                # failed. Counted into `failed` so the run summary shows it —
+                # found live at the 02-12 checkpoint: a prompt/schema mismatch
+                # silently unscored every listing while the run said failed: 0.
+                scoring_failed += 1
         scored.append(s)
 
     return _ScoreBatchOut(
@@ -331,6 +340,7 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None) -> _ScoreBa
         after_deterministic=after_deterministic,
         after_triage=after_triage,
         scored=scored_count,
+        scoring_failed=scoring_failed,
     )
 
 

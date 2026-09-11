@@ -247,6 +247,45 @@ class TestCrawl:
         assert "https://acme.com/careers" not in fetcher.calls
         assert len(result.pages) == 2  # base + /jobs/1
 
+    def test_hash_checked_after_rendering(self):
+        """The stored hash must represent the content extraction reads — for a
+        rendered page that is the RENDERED HTML. Checking the static hash first
+        would store a static-page hash for an SPA site and skip every future
+        run as 'unchanged' before rendering ever ran (02-12 checkpoint)."""
+        nav_text = "<div>" + ("Navigation Menu Item " * 40) + "</div>"
+        static_html = f'<html><body>{nav_text}<a href="/ja/careers">JA</a></body></html>'
+        rendered_html = '<html><body><div>Principal Data Scientist Remote</div><a href="/careers/details/1">Job</a></body></html>'
+
+        def page(url, html, rendered):
+            return PageResult(ok=True, url=url, final_url=url, status_code=200, html=html, rendered=rendered, truncated=False, error=None)
+
+        def make_fetchers():
+            static = RecordingFetcher({
+                "https://acme.com/careers": page("https://acme.com/careers", static_html, False),
+            })
+            rendered = RecordingFetcher({
+                "https://acme.com/careers": page("https://acme.com/careers", rendered_html, True),
+                "https://acme.com/careers/details/1": page("https://acme.com/careers/details/1", "<p>Detail</p>", True),
+            })
+            return static, rendered
+
+        # First crawl: renders (static shell has no job links), not skipped.
+        static, rendered = make_fetchers()
+        first = crawl_careers(static, "https://acme.com/careers", rendered_fetcher=rendered)
+        assert first.rendered is True
+        assert first.skipped is False
+        assert "https://acme.com/careers" in [u for u in rendered.calls]
+
+        # Second crawl with the FIRST RUN'S hash: renders again, hash of the
+        # rendered page matches, skip. A static-hash check would have compared
+        # the static shell's hash and skipped before rendering.
+        static2, rendered2 = make_fetchers()
+        second = crawl_careers(static2, "https://acme.com/careers",
+                               previous_hash=first.page_hash, rendered_fetcher=rendered2)
+        assert second.rendered is True
+        assert second.skipped is True
+        assert second.reason == "unchanged"
+
     def test_ats_config_roundtrip_with_sqlalchemy_hack(self, main_session):
         from huntloop.db.models import Company
         from huntloop.discovery.crawl.careers import load_crawl_hash, save_crawl_hash

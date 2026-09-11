@@ -181,14 +181,11 @@ def crawl_careers(
     if not result.ok:
         return CrawlResult(base_url, reason=f"fetch failed: {result.status_code or result.error}")
 
-    # 2. Check hash
     html = result.html
     page_hash = content_hash(html)
-    if previous_hash and page_hash == previous_hash:
-        return CrawlResult(base_url, page_hash=page_hash, skipped=True, reason="unchanged")
 
     rendered = False
-    # 3. Render when the static HTML cannot lead us to any job listing:
+    # 2. Render when the static HTML cannot lead us to any job listing:
     #    either a near-empty shell, or a "full-looking" shell (nav menus,
     #    locale switchers) whose same-origin links contain no job-detail URL.
     #    Found live at the 02-12 checkpoint: Atlassian's careers page has 5KB
@@ -207,6 +204,14 @@ def crawl_careers(
             except Exception:
                 # Catch RendererUnavailable (or any error) and ignore, sticking to static
                 pass
+
+    # 3. Check hash AFTER the render decision. The hash must represent the
+    #    content extraction would actually read: for a rendered page that is
+    #    the rendered HTML. Checking the static hash first (the original
+    #    ordering) would store a static-page hash for an SPA site and then
+    #    skip every future run as "unchanged" before rendering ever ran.
+    if previous_hash and page_hash == previous_hash:
+        return CrawlResult(base_url, page_hash=page_hash, skipped=True, reason="unchanged", rendered=rendered)
 
     # 4. Collect links and crawl detail pages
     all_links = extract_links(html, base_url)

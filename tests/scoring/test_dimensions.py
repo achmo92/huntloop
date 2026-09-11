@@ -108,6 +108,51 @@ class TestDimensions:
         for dim in DIMENSIONS:
             assert dim.name in ScoringResponse.model_fields
             assert ScoringResponse.model_fields[dim.name].is_required()
+
+    def test_prompt_requests_the_schema_shape(self):
+        """The prompt's response shape MUST validate against ScoringResponse.
+
+        Found live at the 02-12 checkpoint: the prompt requested a nested
+        {"dimensions": {...}} wrapper the schema rejects, so every REAL model
+        call failed validation while mocked tests (which construct the schema
+        shape directly) stayed green. This test substitutes int|null/str
+        placeholders with valid values and round-trips the prompt's example
+        through the model.
+        """
+        import json as json_lib
+        import re
+
+        from huntloop.scoring.config import SCORING_PROMPT
+
+        match = re.search(
+            r"Respond with JSON strictly matching:\n(\{.*?\})\n", SCORING_PROMPT, re.DOTALL
+        )
+        assert match, "prompt must state its JSON response shape"
+        shape = json_lib.loads(match.group(1))
+        assert "dimensions" not in shape, "prompt must not request a nested wrapper"
+        # Substitute placeholders with valid values and validate against the schema
+        filled = {
+            k: ({"score": 3, "reason": "r"} if isinstance(v, dict) else "s")
+            for k, v in shape.items()
+        }
+        parsed = ScoringResponse.model_validate(filled)
+        assert parsed.to_dimension_scores()["role_fit"] == 3
+
+    def test_nested_dimensions_wrapper_is_unwrapped(self):
+        """A model that wraps the dimensions anyway (prompt-following varies)
+        must still validate rather than silently unscore the listing."""
+        response_dict = {
+            "dimensions": {
+                "role_fit": {"score": 4, "reason": "Good match"},
+                "seniority_fit": {"score": 3, "reason": "Matches"},
+                "employer_fit": {"score": 3, "reason": "Fine"},
+                "trajectory": {"score": 4, "reason": "Growing"},
+            },
+            "summary": "Nested but valid",
+        }
+        parsed = ScoringResponse.model_validate(response_dict)
+        assert parsed.role_fit.score == 4
+        assert parsed.summary == "Nested but valid"
             
     def test_score_dimensions_success(self, default_listing, default_criteria):
         response_dict = {

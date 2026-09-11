@@ -46,9 +46,21 @@ Return keep=true when uncertain — an over-aggressive drop is the failure mode 
 Respond with JSON strictly matching: {"keep": bool, "reason": str}
 """
 
+# The response shape the model is told to produce. It MUST match ScoringResponse
+# exactly: the four dimensions FLAT at the top level, no wrapper object, and no
+# model-volunteered flags (flags are computed deterministically, SCOR-09). Found
+# live at the 02-12 checkpoint: the prompt used to request a nested
+# {"dimensions": {...}} wrapper that ScoringResponse rejects, so every real
+# model call failed validation and no listing was ever scored — the mocked tests
+# returned the schema shape directly and never exercised the prompt.
+_SCORING_RESPONSE_SHAPE = json.dumps(
+    {**{d.name: {"score": "int|null", "reason": "str"} for d in DIMENSIONS}, "summary": "str"},
+    indent=2,
+)
+
 SCORING_PROMPT = f"""You are scoring job listings.
 Respond with JSON strictly matching:
-{{"dimensions": {{"<name>": {{"score": int|null, "reason": str}}}}, "summary": str, "flags": [str]}}
+{_SCORING_RESPONSE_SHAPE}
 
 Scale anchors:
 {json.dumps(SCALE_ANCHORS, indent=2)}
@@ -59,6 +71,7 @@ Dimensions:
 Important:
 - `score` MUST be null (not 3) when the posting gives no evidence for that dimension.
 - Do NOT produce an overall score.
+- Do NOT wrap the dimensions in a containing object; the four dimension names are the top-level keys.
 """
 
 def compute_scoring_config_version(triage_prompt: str, scoring_prompt: str, dimensions: tuple[DimensionDef, ...],

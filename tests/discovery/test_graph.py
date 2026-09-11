@@ -757,6 +757,40 @@ class TestGraph:
         assert isinstance(policies[0], RetryPolicy)
         assert policies[0].max_attempts >= 2
 
+    def test_run_discovery_constructs_rendered_fetcher(self, sessionmaker, default_criteria, monkeypatch):
+        """run_discovery must wire a RenderedPageFetcher into the graph when the
+        caller doesn't inject one — otherwise the crawl path can never render
+        SPA-style careers pages (found live at the 02-12 checkpoint: Atlassian)."""
+        from huntloop.graph import build as build_mod
+        from huntloop.graph.build import run_discovery
+
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            make_company(session, "Co0", slug="co0")
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"co0": [make_listing("co0-1")]}),
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+
+        captured = {}
+        real_build = build_mod.build_graph
+
+        def spying_build_graph(**kwargs):
+            captured.update(kwargs)
+            return real_build(**kwargs)
+
+        monkeypatch.setattr(build_mod, "build_graph", spying_build_graph)
+
+        run_discovery(sessionmaker=sessionmaker, llm_client=client,
+                      http_client=MagicMock())
+
+        assert captured["rendered_fetcher"] is not None
+
     def test_run_discovery_returns_run_summary(self, sessionmaker, default_criteria, monkeypatch):
         """run_discovery over three employers: RunSummary totals equal the sum of
         the employer results, and finalize_run stamped the same totals on the Run row."""

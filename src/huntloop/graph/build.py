@@ -25,7 +25,7 @@ from huntloop.criteria.loader import get_active_criteria
 from huntloop.db.models import Company, Job, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
 from huntloop.discovery.ats.base import make_client
-from huntloop.discovery.fetch.page import StaticPageFetcher
+from huntloop.discovery.fetch.page import RenderedPageFetcher, StaticPageFetcher
 from huntloop.graph.state import DiscoveryState
 from huntloop.graph.nodes import (
     fan_out_to_employers,
@@ -182,6 +182,13 @@ def run_discovery(
         http_client = make_client()
     if static_fetcher is None:
         static_fetcher = StaticPageFetcher(http_client)
+    # The crawl path (DISC-05) must be able to render SPA-style careers pages.
+    # Constructing the fetcher is always safe (Playwright imports lazily inside
+    # fetch()); where Playwright is absent the crawl's render step catches
+    # RendererUnavailable and falls back to static. Found live at the 02-12
+    # checkpoint: without this, the pipeline's crawl could NEVER render.
+    if rendered_fetcher is None:
+        rendered_fetcher = RenderedPageFetcher()
 
     # Only build the LLM client when scoring: --no-score must work with no API
     # key configured at all. (A crawl employer under --no-score records an

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from huntloop.config import load_config
 from huntloop.llm.client import LlmCall, LlmResponseError, complete_json
@@ -51,6 +51,21 @@ class ScoringResponse(BaseModel):
     # structural rather than a code review rule — an `overall` key the model
     # volunteers cannot reach the persistence layer.
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def unwrap_nested_dimensions(cls, data):
+        """Accept a ``{"dimensions": {...}}`` wrapper even though the prompt
+        now requests the flat shape. Belt and braces: prompt-following varies
+        by model, and a silently-unscored listing is the costliest failure
+        mode this stage has (found live at the 02-12 checkpoint)."""
+        if isinstance(data, dict) and isinstance(data.get("dimensions"), dict):
+            merged = dict(data["dimensions"])
+            for key, value in data.items():
+                if key != "dimensions":
+                    merged[key] = value
+            return merged
+        return data
 
     role_fit: DimensionScore
     seniority_fit: DimensionScore
