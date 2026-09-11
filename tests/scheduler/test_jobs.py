@@ -166,3 +166,134 @@ def test_run_discovery_exception_is_swallowed(main_engine, monkeypatch):
     cfg = make_cfg(run_at="08:00", timezone="UTC")
     # Must not raise.
     execute_scheduled_run(factory, cfg, now=datetime(2026, 9, 10, 8, 5, 0, tzinfo=UTC))
+
+
+def test_run_status_capped_with_reason(main_engine, monkeypatch):
+    """RUN-08: a scheduled run whose cap trips mid-batch is recorded as
+    RunStatus.CAPPED with a human-readable 'spend cap' reason naming the cap
+    amount, a real positive cost, and an undisturbed trigger classification."""
+    import uuid as uuid_mod
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+
+    import huntloop.graph.nodes as nodes_mod
+    import huntloop.llm.client as llm_client_mod
+    from huntloop.criteria.loader import save_new_criteria_version
+    from huntloop.criteria.schema import (
+        CompensationFloor,
+        CriteriaPayload,
+        DimensionWeights,
+        LocationCriteria,
+    )
+    from huntloop.db.models import Company
+    from huntloop.discovery.ats.base import FetchResult, FetchStatus, RawListing
+    from huntloop.pricing.table import cost_for_usage
+
+    factory = make_session_factory(main_engine)
+    now = datetime(2026, 9, 10, 8, 5, 0, tzinfo=UTC)
+
+    session = factory()
+    try:
+        save_new_criteria_version(session, CriteriaPayload(
+            profile_summary="Senior Python backend developer",
+            seniority_min="senior",
+            seniority_max="principal",
+            dimension_weights=DimensionWeights(
+                role_fit=0.4, seniority_fit=0.2, employer_fit=0.2, trajectory=0.2,
+            ),
+            locations=LocationCriteria(eligible_countries=["US"]),
+            compensation_floor=CompensationFloor(amount="120000", currency="USD", period="annual"),
+        ))
+        session.add(Company(
+            id=uuid_mod.uuid4(), name="CapSchedCo", enabled=True,
+            ats="greenhouse", ats_identifier="capsched", resolved_at=now,
+        ))
+        session.commit()
+    finally:
+        session.close()
+
+    listings = [
+        RawListing(
+            external_id=f"cs-{i}", url=f"https://example.com/jobs/cs-{i}",
+            title=f"cs-{i}", location_raw="New York, NY",
+            description_plain="Python distributed systems role.",
+            description_html=None, posted_at=now, comp_raw="$130k - $150k",
+            comp_min=None, comp_max=None, raw={},
+        )
+        for i in range(4)
+    ]
+
+    class FakeAdapter:
+        platform = "greenhouse"
+
+        def fetch(self, slug, *, client=None):
+            return FetchResult(status=FetchStatus.OK, listings=listings)
+
+    monkeypatch.setattr(nodes_mod, "get_adapter", lambda platform: FakeAdapter())
+
+    # Same cap shape as test_cap_blocked_listing_not_written: both calls on
+    # gpt-4o-mini at 1M/1M tokens ($0.75/call, $1.50/listing); the cap leaves
+    # room for exactly two listings plus a hair.
+    per_call = cost_for_usage("gpt-4o-mini", 1_000_000, 1_000_000)
+    per_listing = per_call * 2
+    cap = per_call * 4 + Decimal("0.000001")
+    monkeypatch.setenv("HUNTLOOP_SCORING_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("HUNTLOOP_RUN_SPEND_CAP_USD", str(cap))
+
+    # execute_scheduled_run goes through the real run_discovery; the LLM
+    # client is the only thing injected (it builds its own otherwise).
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            import json
+            from collections import namedtuple
+
+            system = kwargs["messages"][0]["content"]
+            if "triaging job listings" in system:
+                payload = {"keep": True, "reason": "relevant"}
+            elif "scoring job listings" in system:
+                payload = {
+                    "role_fit": {"score": 4, "reason": "matches"},
+                    "seniority_fit": {"score": 4, "reason": "matches"},
+                    "employer_fit": {"score": 4, "reason": "matches"},
+                    "trajectory": {"score": 4, "reason": "matches"},
+                    "summary": "solid match",
+                }
+            else:
+                raise AssertionError(f"unknown system prompt: {system[:80]!r}")
+
+            Choice = namedtuple("Choice", ["message"])
+            Message = namedtuple("Message", ["content"])
+            Usage = namedtuple("Usage", ["prompt_tokens", "completion_tokens"])
+
+            class FakeCompletion:
+                choices = [Choice(message=Message(content=json.dumps(payload)))]
+                usage = Usage(prompt_tokens=1_000_000, completion_tokens=1_000_000)
+
+            return FakeCompletion()
+
+    class _FakeChat:
+        completions = _FakeCompletions()
+
+    class _FakeOpenAI:
+        chat = _FakeChat()
+
+    monkeypatch.setattr(llm_client_mod, "get_llm_client", lambda session: _FakeOpenAI())
+
+    cfg = make_cfg(run_at="08:00", timezone="UTC")
+    execute_scheduled_run(factory, cfg, now=now)
+
+    session = factory()
+    try:
+        run = session.execute(select(Run)).scalars().one()
+        assert run.status is RunStatus.CAPPED
+        assert "spend cap" in run.error_summary
+        # The reason names the configured cap amount.
+        assert f"${cap:.2f}" in run.error_summary
+        # Real money was spent, and at most one listing's calls of overshoot
+        # past the cap (the cap is checked before each call).
+        assert run.cost_usd > 0
+        assert run.cost_usd <= cap + per_listing
+        # The cap must not disturb trigger classification.
+        assert run.trigger is RunTrigger.SCHEDULED
+    finally:
+        session.close()
