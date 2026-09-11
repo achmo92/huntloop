@@ -50,8 +50,10 @@ def test_classify_trigger_after_gap_is_catch_up():
     assert classify_trigger(cfg, now=datetime(2026, 9, 10, 8, 11, 0, tzinfo=UTC)) == (
         RunTrigger.CATCH_UP
     )
-    # Three days after the occurrence: the multi-day-downtime case.
-    assert classify_trigger(cfg, now=datetime(2026, 9, 13, 8, 0, 0, tzinfo=UTC)) == (
+    # Multi-day downtime, restarted BEFORE today's fire: the most recent
+    # occurrence is yesterday's, so the fire is a catch-up even though the gap
+    # since the *missed* fire (three days ago) is longer still.
+    assert classify_trigger(cfg, now=datetime(2026, 9, 13, 7, 30, 0, tzinfo=UTC)) == (
         RunTrigger.CATCH_UP
     )
 
@@ -98,6 +100,8 @@ def test_scheduled_run_populates_stage_counts(main_engine, monkeypatch):
     factory = make_session_factory(main_engine)
 
     def _fake_run_discovery(*, sessionmaker, trigger, **kwargs):
+        from types import SimpleNamespace
+
         session = sessionmaker()
         try:
             repo = RunRepository(session)
@@ -117,7 +121,12 @@ def test_scheduled_run_populates_stage_counts(main_engine, monkeypatch):
                 cost_usd=0.01,
             )
             session.commit()
-            return run.id
+            return SimpleNamespace(
+                run_id=str(run.id),
+                status="success",
+                new_jobs_written=3,
+                cost_usd=0.01,
+            )
         finally:
             session.close()
 
