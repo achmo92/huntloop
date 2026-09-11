@@ -20,3 +20,8 @@ def test_all_api_prefixes_mounted(client):
     assert resp.status_code == 200
     paths = set(resp.json()["paths"])
     assert "/api/health" in paths
+    # The criteria contract landed by plan 04-01 Task 2:
+    assert "/api/criteria" in paths
+    assert "/api/criteria/versions" in paths
+    assert "/api/criteria/versions/{version}" in paths
+    assert "/api/criteria/describe" in paths
