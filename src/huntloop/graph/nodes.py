@@ -28,6 +28,7 @@ from huntloop.graph.state import EmployerResult
 from huntloop.registry.staleness import record_fetch_outcome
 from huntloop.scoring.filters import apply_deterministic_filters
 from huntloop.scoring.pipeline import score_listing, ScoredListing
+from huntloop.scoring.spend_cap import SpendCapReached
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class _ScoreBatchOut:
     after_triage: int = 0
     scored: int = 0
     scoring_failed: int = 0
+    capped: bool = False
 
 
 def load_employers(state, *, sessionmaker: sessionmaker) -> dict:
@@ -97,6 +99,7 @@ def process_employer(
     static_fetcher=None,
     rendered_fetcher=None,
     now=None,
+    spend_tracker=None,
 ) -> dict:
     """Process a single employer end to end: fetch -> dedup -> score -> write.
 
@@ -144,6 +147,7 @@ def process_employer(
         stage = "score"
         scored_batch = _score_batch(
             listings, criteria, state, llm_client=llm_client, now=now,
+            spend_tracker=spend_tracker,
         )
         result["after_deterministic"] = scored_batch.after_deterministic
         result["after_triage"] = scored_batch.after_triage
@@ -151,6 +155,8 @@ def process_employer(
         result["tokens_in"] = scored_batch.tokens_in
         result["tokens_out"] = scored_batch.tokens_out
         result["failed"] += scored_batch.scoring_failed
+        if scored_batch.capped:
+            result["capped"] = True
 
         stage = "write"
         outcome = write_batch(
@@ -285,7 +291,8 @@ def _dedupe_within_batch(company, listings):
     return deduped, failed
 
 
-def _score_batch(listings, criteria, state, *, llm_client, now=None) -> _ScoreBatchOut:
+def _score_batch(listings, criteria, state, *, llm_client, now=None,
+                 spend_tracker=None) -> _ScoreBatchOut:
     """Run every listing through the scoring pipeline (or filters-only mode).
 
     The per-stage survivor counts are computed here because their meaning
@@ -294,6 +301,10 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None) -> _ScoreBa
     (tier_reached stays DETERMINISTIC by definition -- the listing never
     reached a further tier), while in scoring mode a DETERMINISTIC tier means
     the filters dropped it.
+
+    spend_tracker (RUN-08): when supplied, every scoring call is gated by the
+    run-level cap. A trip ends this batch; the listing whose call was refused
+    is NOT appended (see the except below for why that is load-bearing).
     """
     scored: list[ScoredListing] = []
     tokens_in = 0
@@ -302,6 +313,7 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None) -> _ScoreBa
     after_triage = 0
     scored_count = 0
     scoring_failed = 0
+    capped = False
 
     for listing in listings:
         if state.get("no_score"):
@@ -310,10 +322,19 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None) -> _ScoreBa
                 # passed the deterministic filters (no drop_reason == not dropped)
                 after_deterministic += 1
         else:
-            s = score_listing(
-                llm_client, listing, criteria,
-                criteria_version=state["criteria_version"], now=now,
-            )
+            try:
+                s = score_listing(
+                    llm_client, listing, criteria,
+                    criteria_version=state["criteria_version"], now=now,
+                    spend_tracker=spend_tracker,
+                )
+            except SpendCapReached:
+                # Stop this employer's batch here. The listing is NOT appended:
+                # write_listing() persists every listing handed to it regardless
+                # of scored/drop_reason, so an appended cap-blocked listing would
+                # land in the jobs table as a permanently half-scored row.
+                capped = True
+                break
             for usage in s.usage:
                 tokens_in += usage.prompt_tokens
                 tokens_out += usage.completion_tokens
@@ -341,6 +362,7 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None) -> _ScoreBa
         after_triage=after_triage,
         scored=scored_count,
         scoring_failed=scoring_failed,
+        capped=capped,
     )
 
 

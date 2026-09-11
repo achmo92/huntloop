@@ -36,6 +36,9 @@ class EmployerResult(TypedDict, total=False):
     tokens_out: int
     error: str | None
     stage: str | None
+    # Distinct from `error`: a cap is a deliberate budget stop, not a failure,
+    # and must not push run_status() to PARTIAL.
+    capped: bool         # True when the run-level spend cap stopped this employer's scoring
 
 
 class DiscoveryState(TypedDict, total=False):

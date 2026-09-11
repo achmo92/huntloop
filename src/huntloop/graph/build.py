@@ -94,6 +94,7 @@ def build_graph(
     static_fetcher=None,
     rendered_fetcher=None,
     now=None,
+    spend_tracker=None,
 ):
     """Build and compile the discovery StateGraph.
 
@@ -117,6 +118,7 @@ def build_graph(
             static_fetcher=static_fetcher,
             rendered_fetcher=rendered_fetcher,
             now=now,
+            spend_tracker=spend_tracker,
         ),
         retry_policy=RetryPolicy(max_attempts=3),
     )
