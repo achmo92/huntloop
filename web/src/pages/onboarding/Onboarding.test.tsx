@@ -141,6 +141,22 @@ describe("Onboarding", () => {
     expect(mockedApiPost).not.toHaveBeenCalled()
   })
 
+  it("renders every editable field group (locations, seniority, comp, exclusions, auth)", async () => {
+    mockedApi.mockResolvedValue(EXISTING_RESPONSE)
+    renderOnboarding(<Onboarding />)
+
+    await screen.findByLabelText("Currency")
+    expect(screen.getByText("Eligible countries")).toBeInTheDocument()
+    expect(screen.getByText("Minimum level")).toBeInTheDocument()
+    expect(screen.getByText("Compensation floor")).toBeInTheDocument()
+    expect(screen.getByText("Title keywords to avoid")).toBeInTheDocument()
+    expect(
+      screen.getByText("Countries you're authorized to work in")
+    ).toBeInTheDocument()
+    expect(screen.getByText("I need sponsorship")).toBeInTheDocument()
+    expect(screen.getByText("Priority order")).toBeInTheDocument()
+  })
+
   it("saves via POST /api/criteria and shows the new version", async () => {
     const user = userEvent.setup()
     mockedApi.mockResolvedValue(EXISTING_RESPONSE)
