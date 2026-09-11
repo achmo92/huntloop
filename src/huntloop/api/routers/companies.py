@@ -83,6 +83,13 @@ class ResolveBatchResult(BaseModel):
     queued: int
 
 
+class CoverageOut(BaseModel):
+    added: int
+    watchable: int
+    needs_attention: int
+    resolved: int
+
+
 def _resolution_block(company: Company) -> dict:
     if not company.ats_config:
         return {}
@@ -173,6 +180,27 @@ def resolve_batch(
     for company_id in body.ids:
         run_in_background(resolve_company_in_background, company_id)
     return ResolveBatchResult(queued=len(body.ids))
+
+
+@router.get("/coverage", response_model=CoverageOut)
+def coverage(session: Session = Depends(get_session)) -> CoverageOut:
+    """D-06's honest headline numbers — no client-side math.
+
+    ``watchable`` counts only resolved AND enabled employers (what will
+    actually be watched); ``needs_attention`` is every added employer whose
+    resolution has not succeeded. The UI renders "we'd watch N of your M added
+    employers" directly from these fields.
+    """
+    companies = session.execute(select(Company)).scalars().all()
+    added = len(companies)
+    resolved = sum(1 for c in companies if c.resolved_at is not None)
+    watchable = sum(1 for c in companies if c.resolved_at is not None and c.enabled)
+    return CoverageOut(
+        added=added,
+        watchable=watchable,
+        needs_attention=added - resolved,
+        resolved=resolved,
+    )
 
 
 @router.patch("/{company_id}", response_model=CompanyOut)
