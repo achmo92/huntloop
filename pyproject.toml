@@ -56,3 +56,8 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+
+[tool.ruff.lint.flake8-bugbear]
+# fastapi.Depends in argument defaults is FastAPI's canonical dependency
+# idiom (every Phase 4 router uses it), not a mutable-default bug.
+extend-immutable-calls = ["fastapi.Depends"]

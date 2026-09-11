@@ -33,7 +33,7 @@ def api_engine(tmp_path) -> Engine:
     collision, one file.
     """
     engine = make_engine(f"sqlite:///{tmp_path / 'api.db'}")
-    import huntloop.credentials.models  # noqa: F401  (populates CredentialsBase.metadata)
+    import huntloop.credentials.models
     import huntloop.db.models  # noqa: F401  (populates Base.metadata)
 
     Base.metadata.create_all(engine)

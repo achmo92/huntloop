@@ -61,7 +61,12 @@ EXTRACTION_RESULT = {
     "compensation_floor": {"amount": 110000, "currency": "EUR", "period": "annual"},
     "exclusions": {"title_keywords": ["crypto"], "employers": []},
     "work_authorization": {"countries_authorized": ["DE"], "requires_sponsorship": False},
-    "dimension_weights": {"role_fit": 4.0, "seniority_fit": 2.0, "employer_fit": 1.0, "trajectory": 3.0},
+    "dimension_weights": {
+        "role_fit": 4.0,
+        "seniority_fit": 2.0,
+        "employer_fit": 1.0,
+        "trajectory": 3.0,
+    },
 }
 
 
@@ -165,9 +170,7 @@ def test_invalid_payload_returns_422_and_writes_nothing(client):
     assert bad_currency.status_code == 422
     assert "ZZZ" in bad_currency.text
 
-    bad_seniority = client.post(
-        "/api/criteria", json=_valid_payload(seniority_min="wizard")
-    )
+    bad_seniority = client.post("/api/criteria", json=_valid_payload(seniority_min="wizard"))
     assert bad_seniority.status_code == 422
     assert "wizard" in bad_seniority.text
 
@@ -192,8 +195,10 @@ def test_describe_returns_draft_and_persists_nothing(client):
 
     resp = client.post(
         "/api/criteria/describe",
-        json={"text": "Senior backend person in fintech, Berlin or EU remote, "
-                      "role fit matters most, then trajectory, no crypto"},
+        json={
+            "text": "Senior backend person in fintech, Berlin or EU remote, "
+            "role fit matters most, then trajectory, no crypto"
+        },
     )
     assert resp.status_code == 200
     suggested = resp.json()["suggested"]

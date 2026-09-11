@@ -9,10 +9,10 @@ constructs `Criteria` rows directly.
 
 from __future__ import annotations
 
-import pycountry
 from datetime import datetime
 from typing import Any
 
+import pycountry
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -254,9 +254,7 @@ def read_current(session: Session = Depends(get_session)) -> CriteriaCurrentOut:
     A null current with zero versions is a valid empty state, not an error —
     the intake flow starts from exactly this.
     """
-    total_versions: int = session.execute(
-        select(func.count()).select_from(Criteria)
-    ).scalar_one()
+    total_versions: int = session.execute(select(func.count()).select_from(Criteria)).scalar_one()
     active = get_active_criteria(session)
     if active is None:
         return CriteriaCurrentOut(current=None, total_versions=total_versions)
@@ -275,18 +273,14 @@ def list_versions(session: Session = Depends(get_session)) -> list[CriteriaVersi
 
 @router.get("/versions/{version}", response_model=CriteriaVersionOut)
 def read_version(version: int, session: Session = Depends(get_session)) -> CriteriaVersionOut:
-    row = session.execute(
-        select(Criteria).where(Criteria.version == version)
-    ).scalar_one_or_none()
+    row = session.execute(select(Criteria).where(Criteria.version == version)).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail=f"criteria version {version} not found")
     return _row_to_out(row)
 
 
 @router.post("", status_code=201, response_model=SaveResult)
-def save_criteria(
-    payload: CriteriaPayload, session: Session = Depends(get_session)
-) -> SaveResult:
+def save_criteria(payload: CriteriaPayload, session: Session = Depends(get_session)) -> SaveResult:
     """Versioned save. CriteriaPayload is the request body, so Pydantic gives
     the 422s (pycountry validators included) before anything is written; the
     row itself is created by the proven loader — every form save is a NEW
@@ -320,7 +314,5 @@ def describe_criteria(
             schema=CriteriaExtraction,
         )
     except LlmResponseError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"criteria extraction failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"criteria extraction failed: {exc}") from exc
     return DescribeResult(suggested=_normalize_draft(call.content))
