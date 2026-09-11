@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { api, apiPatch } from "@/lib/api"
+import { api, apiPatch, apiPost } from "@/lib/api"
 import Listings from "../Listings"
 import type { JobListResponse, JobRow } from "./ListingsTable"
+import type { JobDetail } from "./DetailDrawer"
 
 vi.mock("@/lib/api", () => {
   class ApiError extends Error {
@@ -30,6 +31,7 @@ vi.mock("@/lib/api", () => {
 
 const mockedApi = vi.mocked(api)
 const mockedApiPatch = vi.mocked(apiPatch)
+const mockedApiPost = vi.mocked(apiPost)
 
 const ROW: JobRow = {
   id: "job-1",
@@ -59,6 +61,39 @@ const LIST: JobListResponse = {
 
 const EMPTY: JobListResponse = { items: [], total: 0, page: 1, page_size: 50 }
 
+const DETAIL: JobDetail = {
+  ...ROW,
+  description: "Responsibilities\nOwn the backend platform.",
+  score_dimensions: {
+    role_fit: { score: 4, reason: "Strong overlap with your backend focus" },
+    seniority_fit: { score: 5, reason: "Senior level matches your target" },
+    employer_fit: { score: 3, reason: "Solid company, smaller team" },
+    trajectory: { score: 4, reason: "Clear growth path" },
+  },
+  score_summary: "A close fit overall",
+  scored_criteria_version: 3,
+  scored_rubric_version: "2026-09",
+  scored_with_model: "gpt-4o-mini",
+  filter_tier_reached: "score",
+  open_duration_days: 10,
+  repost_count: 1,
+  status_events: [
+    {
+      from_status: null,
+      to_status: "new",
+      changed_at: "2026-09-01T10:00:00Z",
+      source: "SYSTEM",
+    },
+    {
+      from_status: "new",
+      to_status: "shortlisted",
+      changed_at: "2026-09-02T10:00:00Z",
+      source: "USER",
+    },
+  ],
+  notes: [],
+}
+
 function renderWithProviders(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -76,6 +111,20 @@ function mockJobs(list: JobListResponse) {
     if (path.startsWith("/api/jobs?")) return list
     throw new Error(`unexpected GET ${path}`)
   })
+}
+
+function mockJobsWithDetail(list: JobListResponse, detail: JobDetail) {
+  mockedApi.mockImplementation(async (path) => {
+    if (path === "/api/companies") return []
+    if (path.startsWith("/api/jobs?")) return list
+    if (path === `/api/jobs/${detail.id}`) return detail
+    throw new Error(`unexpected GET ${path}`)
+  })
+}
+
+async function openDrawer(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByText(ROW.title))
+  await screen.findByTestId("job-description")
 }
 
 function calledPaths(): string[] {
@@ -218,5 +267,91 @@ describe("Listings workspace", () => {
     expect(
       screen.getAllByRole("button", { name: "Clear filters" }).length
     ).toBeGreaterThan(0)
+  })
+
+  it("shows the four dimensions with their reasoning (D-11, TRAK-04)", async () => {
+    const user = userEvent.setup()
+    mockJobsWithDetail(LIST, DETAIL)
+    renderWithProviders(<Listings />)
+    await openDrawer(user)
+
+    expect(screen.getByText("Role fit")).toBeInTheDocument()
+    expect(screen.getByText("Seniority fit")).toBeInTheDocument()
+    expect(screen.getByText("Employer fit")).toBeInTheDocument()
+    expect(screen.getByText("Trajectory")).toBeInTheDocument()
+    expect(
+      screen.getByText("Strong overlap with your backend focus")
+    ).toBeInTheDocument()
+    expect(screen.getAllByText("4/5").length).toBeGreaterThan(0)
+  })
+
+  it("renders open duration and repost count as facts (D-13, TRAK-07)", async () => {
+    const user = userEvent.setup()
+    mockJobsWithDetail(LIST, DETAIL)
+    renderWithProviders(<Listings />)
+    await openDrawer(user)
+
+    expect(screen.getByText("Open for 10 days")).toBeInTheDocument()
+    expect(screen.getByText("Reposted 1×")).toBeInTheDocument()
+  })
+
+  it("adds a freeform note and shows it after the refetch (TRAK-02)", async () => {
+    const user = userEvent.setup()
+    let detail: JobDetail = { ...DETAIL, notes: [] }
+    mockedApi.mockImplementation(async (path) => {
+      if (path === "/api/companies") return []
+      if (path.startsWith("/api/jobs?")) return LIST
+      if (path === `/api/jobs/${ROW.id}`) return detail
+      throw new Error(`unexpected GET ${path}`)
+    })
+    mockedApiPost.mockImplementation(async () => {
+      detail = {
+        ...detail,
+        notes: [
+          { id: "note-1", text: "Great fit", created_at: "2026-09-11T10:00:00Z" },
+        ],
+      }
+      return detail.notes[0]
+    })
+    renderWithProviders(<Listings />)
+    await openDrawer(user)
+
+    await user.type(screen.getByLabelText("Add a note"), "Great fit")
+    await user.click(screen.getByRole("button", { name: "Add note" }))
+
+    await waitFor(() => {
+      expect(mockedApiPost).toHaveBeenCalledWith(`/api/jobs/${ROW.id}/notes`, {
+        text: "Great fit",
+      })
+    })
+    expect(await screen.findByText("Great fit")).toBeInTheDocument()
+  })
+
+  it("renders the status timeline oldest-first (TRAK-03)", async () => {
+    const user = userEvent.setup()
+    mockJobsWithDetail(LIST, DETAIL)
+    renderWithProviders(<Listings />)
+    await openDrawer(user)
+
+    const events = screen.getAllByTestId("timeline-event")
+    expect(events).toHaveLength(2)
+    expect(events[0]).toHaveTextContent("New")
+    expect(events[0]).not.toHaveTextContent("Shortlisted")
+    expect(events[1]).toHaveTextContent("Shortlisted")
+  })
+
+  it("renders a hostile description as text, never as markup (UI-06)", async () => {
+    const user = userEvent.setup()
+    const hostile: JobDetail = {
+      ...DETAIL,
+      description: '<script>alert("x")</script>Responsibilities',
+    }
+    mockJobsWithDetail(LIST, hostile)
+    renderWithProviders(<Listings />)
+    await openDrawer(user)
+
+    const description = screen.getByTestId("job-description")
+    expect(description.textContent).toContain('<script>alert("x")</script>')
+    expect(document.querySelector("script")).toBeNull()
   })
 })

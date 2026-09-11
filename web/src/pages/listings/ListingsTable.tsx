@@ -104,7 +104,7 @@ export function useJobsQuery(params: JobsQueryParams) {
   })
 }
 
-function formatComp(job: JobRow): string {
+export function formatComp(job: JobRow): string {
   if (job.comp_min === null && job.comp_max === null) return "—"
   const formatter = new Intl.NumberFormat()
   const at = (value: number | null) =>
@@ -114,7 +114,7 @@ function formatComp(job: JobRow): string {
   return suffix ? `${range} ${suffix}` : range
 }
 
-function formatLocation(job: JobRow): string {
+export function formatLocation(job: JobRow): string {
   if (job.location && job.is_remote) return `${job.location} · Remote`
   if (job.location) return job.location
   return job.is_remote ? "Remote" : "—"
