@@ -12,6 +12,8 @@ assertion failure rather than a collection error.
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
+
 from huntloop.db.models import (
     Company,
     FeedbackNote,
@@ -340,3 +342,130 @@ def test_detail_sanitizes_employer_html(client, make_session):
 def test_detail_unknown_id_is_404(client):
     resp = client.get(f"/api/jobs/{uuid.uuid4()}")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/jobs/{id}/status — one action, timestamped event (TRAK-01/03, D-10)
+# ---------------------------------------------------------------------------
+
+
+def _events(make_session, job_id):
+    session = make_session()
+    try:
+        return list(
+            session.execute(
+                select(StatusEvent)
+                .where(StatusEvent.job_id == job_id)
+                .order_by(StatusEvent.changed_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+    finally:
+        session.close()
+
+
+def _seed_new_job(make_session, *, title="Backend Engineer"):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        job = _mk_job(session, company, title=title, dedup_key="acme:1")
+        job_id = job.id
+        session.commit()
+    finally:
+        session.close()
+    return job_id
+
+
+def test_patch_status_records_timestamped_event(client, make_session):
+    job_id = _seed_new_job(make_session)
+
+    resp = client.patch(f"/api/jobs/{job_id}/status", json={"status": "shortlisted"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == str(job_id)
+    assert body["status"] == "shortlisted"
+    assert body["changed_at"] is not None
+
+    events = _events(make_session, job_id)
+    assert len(events) == 1
+    assert events[0].from_status == JobStatus.NEW
+    assert events[0].to_status == JobStatus.SHORTLISTED
+    assert events[0].changed_at is not None
+
+
+def test_two_transitions_append_second_event_in_order(client, make_session):
+    job_id = _seed_new_job(make_session)
+
+    assert (
+        client.patch(
+            f"/api/jobs/{job_id}/status", json={"status": "shortlisted"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.patch(
+            f"/api/jobs/{job_id}/status", json={"status": "applied"}
+        ).status_code
+        == 200
+    )
+
+    events = _events(make_session, job_id)
+    assert len(events) == 2
+    assert (events[0].from_status, events[0].to_status) == (
+        JobStatus.NEW,
+        JobStatus.SHORTLISTED,
+    )
+    assert (events[1].from_status, events[1].to_status) == (
+        JobStatus.SHORTLISTED,
+        JobStatus.APPLIED,
+    )
+    assert events[0].changed_at is not None and events[1].changed_at is not None
+
+
+def test_patch_invalid_status_is_422(client, make_session):
+    job_id = _seed_new_job(make_session)
+    resp = client.patch(f"/api/jobs/{job_id}/status", json={"status": "wizard"})
+    assert resp.status_code == 422
+
+
+def test_patch_unknown_id_is_404(client):
+    resp = client.patch(
+        f"/api/jobs/{uuid.uuid4()}/status", json={"status": "shortlisted"}
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/{id}/notes — freeform feedback (TRAK-02)
+# ---------------------------------------------------------------------------
+
+
+def test_post_note_created_and_visible_in_detail(client, make_session):
+    job_id = _seed_new_job(make_session)
+
+    resp = client.post(
+        f"/api/jobs/{job_id}/notes", json={"text": "follow up Monday"}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["text"] == "follow up Monday"
+    assert body["created_at"] is not None
+
+    detail = client.get(f"/api/jobs/{job_id}").json()
+    assert [n["id"] for n in detail["notes"]] == [body["id"]]
+
+    session = make_session()
+    try:
+        note = session.get(FeedbackNote, uuid.UUID(body["id"]))
+        assert note is not None
+        assert note.source == FeedbackSource.JOB_NOTE
+        assert note.job_id == job_id
+    finally:
+        session.close()
+
+
+def test_post_empty_note_is_422(client, make_session):
+    job_id = _seed_new_job(make_session)
+    resp = client.post(f"/api/jobs/{job_id}/notes", json={"text": ""})
+    assert resp.status_code == 422
