@@ -12,9 +12,24 @@ from decimal import Decimal
 
 import pytest
 
-import huntloop.config as config
+from huntloop import config
 from huntloop.config import ConfigError, load_config
 from huntloop.db.repository import SettingsRepository
+
+
+@pytest.fixture(autouse=True)
+def _clean_overlay_env(monkeypatch):
+    """Pin the env-default layer so overlay assertions are shell-independent."""
+    for name in (
+        "HUNTLOOP_OPENAI_BASE_URL",
+        "HUNTLOOP_TRIAGE_MODEL",
+        "HUNTLOOP_SCORING_MODEL",
+        "HUNTLOOP_EXTRACTION_MODEL",
+        "HUNTLOOP_RUN_AT",
+        "HUNTLOOP_TIMEZONE",
+        "HUNTLOOP_RUN_SPEND_CAP_USD",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _load_effective(session):

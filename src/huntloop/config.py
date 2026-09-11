@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import re
 import zoneinfo
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -90,13 +90,15 @@ def _timezone_env(name: str, default: str) -> str:
     return tz_name
 
 
-def _optional_positive_decimal_env(name: str) -> Decimal | None:
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return None
+def _parse_positive_decimal(raw, *, name: str) -> Decimal:
+    """Parse and validate a positive USD decimal, shared by env and Setting rows.
+
+    One validator for both layers: a bad value from `os.environ` and a bad value
+    from a hand-edited `Setting` row fail with the same error shape.
+    """
     try:
-        value = Decimal(raw.strip())
-    except InvalidOperation as exc:
+        value = Decimal(str(raw).strip())
+    except (InvalidOperation, ValueError) as exc:
         raise ConfigError(
             f"{name} must be a decimal number of US dollars (e.g. 2.00). Got: {raw!r}"
         ) from exc
@@ -106,6 +108,13 @@ def _optional_positive_decimal_env(name: str) -> Decimal | None:
             f"spend cap. Got: {value}"
         )
     return value
+
+
+def _optional_positive_decimal_env(name: str) -> Decimal | None:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return _parse_positive_decimal(raw, name=name)
 
 
 def load_config() -> Config:
@@ -199,6 +208,94 @@ def load_config() -> Config:
         timezone=timezone,
         run_spend_cap_usd=run_spend_cap_usd,
     )
+
+
+# D-15: the seven config keys the settings UI may override at runtime. This
+# mapping is the single source of truth — the overlay reads exactly these
+# Setting rows and nothing else, so no second config mechanism exists.
+SETTING_KEY_TO_FIELD: dict[str, str] = {
+    "openai_base_url": "openai_base_url",
+    "triage_model": "triage_model",
+    "scoring_model": "scoring_model",
+    "extraction_model": "extraction_model",
+    "run_at": "run_at",
+    "timezone": "timezone",
+    "run_spend_cap_usd": "run_spend_cap_usd",
+}
+
+_MODEL_SETTING_KEYS = ("triage_model", "scoring_model", "extraction_model")
+
+
+def _validate_stored_setting(key: str, value):
+    """Re-validate one stored Setting value using the env path's semantics.
+
+    The settings API validates before writing, but a hand-edited row must still
+    fail fast (Phase 1's posture) rather than silently feed a bad value into a
+    scheduler trigger or a model call.
+    """
+    if key == "openai_base_url":
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"Setting '{key}' must be a non-empty URL. Got: {value!r}")
+        url = value.strip()
+        if not url.startswith(("http://", "https://")):
+            raise ConfigError(
+                f"Setting '{key}' must be an http:// or https:// URL — all model "
+                "access in HuntLoop routes through one OpenAI-compatible endpoint "
+                f"(OPS-06). Got: {url!r}"
+            )
+        return url
+    if key in _MODEL_SETTING_KEYS:
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(
+                f"Setting '{key}' must be a non-empty model name. Got: {value!r}"
+            )
+        return value.strip()
+    if key == "run_at":
+        if not isinstance(value, str):
+            raise ConfigError(f"Setting '{key}' must be an HH:MM string. Got: {value!r}")
+        parse_run_at(value)  # fail fast with the env parser's message
+        return value.strip()
+    if key == "timezone":
+        if not isinstance(value, str):
+            raise ConfigError(
+                f"Setting '{key}' must be an IANA timezone name. Got: {value!r}"
+            )
+        tz_name = value.strip()
+        try:
+            zoneinfo.ZoneInfo(tz_name)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError) as exc:
+            raise ConfigError(
+                f"Setting '{key}' must be a valid IANA timezone name (e.g. "
+                f"America/New_York, Europe/London, UTC). Got: {value!r} ({exc})"
+            ) from exc
+        return tz_name
+    if key == "run_spend_cap_usd":
+        return _parse_positive_decimal(value, name=f"Setting '{key}'")
+    raise ConfigError(f"Unknown setting key: {key!r}")
+
+
+def load_effective_config(session) -> Config:
+    """Env boot defaults overlaid by Setting rows (D-15).
+
+    `load_config()` remains the boot-time default layer; the UI's Setting rows
+    are the runtime override. A stored-but-null row reads as absent (the
+    repository's get_value returns None for both), so clearing the spend cap in
+    the UI falls back to the env default — an absent cap by default. Any invalid
+    stored value raises ConfigError naming the key, exactly like the env path.
+    """
+    from huntloop.db.repository import SettingsRepository
+
+    env_cfg = load_config()
+    repo = SettingsRepository(session)
+    overrides: dict[str, object] = {}
+    for key, field in SETTING_KEY_TO_FIELD.items():
+        raw = repo.get_value(key)
+        if raw is None:
+            continue
+        overrides[field] = _validate_stored_setting(key, raw)
+    if not overrides:
+        return env_cfg
+    return replace(env_cfg, **overrides)
 
 
 def get_secret_key() -> str:
