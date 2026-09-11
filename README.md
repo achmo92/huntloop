@@ -4,7 +4,20 @@ A self-hosted job discovery and scoring pipeline. Relevant roles surface without
 
 ## Status
 
-Phase 1 of 5 complete: the shared data model and persistence layer. There is no CLI, API, or web interface yet — Phase 2 adds the discovery pipeline. What exists today is the schema both later containers build on, plus its three guarantees.
+Phase 4 of 5 complete: the pipeline interface (web UI + API). The whole system
+runs from a browser on your own network — describe your criteria once, watch
+employers resolve, review and act on scored listings, and read the dashboard.
+There is no terminal or file editing required for day-to-day use; the CLI remains
+the builder/operator harness.
+
+## What works today
+
+- **One command starts everything** (`OPS-01`): `docker compose up -d` runs both
+  migrations, the scheduler, and the web interface.
+- **Any device on your network** (`UI-01`): the interface is served on port 8000
+  with no auth ceremony (private-network trust model).
+- **The whole pipeline from the browser**: criteria intake, employer registry and
+  resolution, the listings workspace, run history, settings, and diagnostics.
 
 ## What Phase 1 guarantees
 
@@ -29,11 +42,50 @@ openssl rand -base64 32
 ## Running the stack
 
 ```bash
-docker compose up          # runs both migrations, then exits (no app service yet in Phase 1)
-docker compose logs migrate
+docker compose up -d          # migrations + scheduler + web interface
+docker compose logs -f web    # watch the API/UI come up
 ```
 
+`docker compose up -d` is the entire system: a one-shot `migrate` service (both
+databases), the long-running `scheduler`, and the `web` service (FastAPI serving
+the built React SPA same-origin). Open **http://localhost:8000** on the host, or
+**http://<machine-ip>:8000** from any other device on the same network — no
+terminal, no file editing, no login.
+
+To stop everything: `docker compose down` (add `-v` to also delete the data
+volume — that erases your listings).
+
 Compose itself refuses to start if `HUNTLOOP_SECRET_KEY` is unset — this is the same fail-fast check as the one inside the application.
+
+## The browser interface (Phase 4)
+
+Everything the CLI does is reachable from the UI; the CLI remains the
+builder/operator harness, not the day-to-day interface.
+
+- **First run — onboarding** (`/onboarding`): describe in a paragraph what you
+  are looking for. The model extracts a structured draft, which you review and
+  correct in an editable form (locations, seniority, compensation floor +
+  currency, exclusions, work authorization), then drag-order the four scoring
+  dimensions. Saving creates criteria **version 1**. The same flow proposes
+  employers to track; you check the ones you want, and resolution runs on those
+  only, with an honest coverage headline ("we can watch N of the ~M we'd target").
+- **Dashboard** (`/`): the pipeline funnel by stage, the next scheduled run, the
+  last run's outcome and cost, and a **Run now** button for an on-demand run.
+  A quiet week is explained here rather than left ambiguous.
+- **Listings** (`/listings`): a dense table of every scored listing with a
+  composable filter bar (status, employer, score threshold, date range). Open a
+  row's drawer for the per-dimension score breakdown, reasoning, notes, open
+  duration and repost count, and the status timeline. Change status in one click
+  from the row or the drawer — that transition is the feedback signal.
+- **Employers** (`/employers`): the registry with platform + board id for
+  resolved employers and a per-employer **Retry** for the ones needing attention.
+  Disable an employer in place without losing its history.
+- **Runs** (`/runs`): run history and per-run detail, including failures.
+- **Settings** (`/settings`): API access, per-stage model choice, schedule
+  (time + timezone), and spend cap. Each section saves independently; a schedule
+  change takes effect without restarting the scheduler. **Run diagnostics**
+  checks API access, database connectivity, and a live employer fetch, streaming
+  a result with a readable remedy for each.
 
 ## Local development
 

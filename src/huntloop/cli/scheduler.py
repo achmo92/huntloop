@@ -41,10 +41,15 @@ def cmd_scheduler_start(args) -> int:
         )
         watcher.start()
 
-        job = scheduler.get_job(JOB_ID)  # None before start(); informational only
+        # get_job() before start() only sees _pending_jobs: on a cold jobstore
+        # the job just added is returned there WITHOUT a next_run_time (APScheduler
+        # sets it when the scheduler actually starts). Guard the optional field
+        # instead of assuming it exists, or a fresh deployment crash-loops.
+        job = scheduler.get_job(JOB_ID)  # informational only
+        next_run = getattr(job, "next_run_time", None) if job is not None else None
         print(
             f"huntloop scheduler: daily discovery at {cfg.run_at} {cfg.timezone}"
-            f"{'' if job is None else f' (next: {job.next_run_time})'}",
+            f"{'' if next_run is None else f' (next: {next_run})'}",
             flush=True,
         )
         try:

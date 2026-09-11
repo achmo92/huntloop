@@ -52,7 +52,14 @@ A catch-up run is distinguishable in history: its trigger is `catch_up`, not `sc
 
 ## Changing the schedule
 
-Edit `HUNTLOOP_RUN_AT` / `HUNTLOOP_TIMEZONE` in your environment and restart the service:
+Since Phase 4 you can change the schedule from the web interface (**Settings →
+Schedule**). The running scheduler watches for saved changes and reschedules the
+job live — **no restart and no environment edit required**. `HUNTLOOP_RUN_AT` /
+`HUNTLOOP_TIMEZONE` remain the boot-time defaults; a value saved in Settings
+overrides them until you clear it.
+
+To change the boot-time default instead, edit the variables in your environment
+and restart the service:
 
 ```bash
 docker compose up -d scheduler   # recreates the container with the new env

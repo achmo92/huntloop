@@ -585,6 +585,34 @@ class TestSchedulerCommand:
         assert main(["scheduler", "start"]) == EXIT_OK
         assert started == [True], "scheduler.start() must be called exactly once"
 
+    def test_scheduler_start_tolerates_pending_job_without_next_run_time(
+        self, monkeypatch
+    ):
+        """Cold jobstore: get_job() before start() returns the just-added pending
+        Job, which has no next_run_time yet. Printing the banner must not abort."""
+        from huntloop.config import load_config
+
+        started = []
+
+        class PendingJob:
+            pass  # no next_run_time, like APScheduler's pending job
+
+        class FakeScheduler:
+            def get_job(self, job_id):
+                return PendingJob()
+
+            def start(self):
+                started.append(True)
+
+        monkeypatch.setattr(
+            "huntloop.cli.scheduler.build_scheduler", lambda cfg: FakeScheduler()
+        )
+        monkeypatch.setattr(
+            "huntloop.cli.scheduler.load_effective_config", lambda session: load_config()
+        )
+        assert main(["scheduler", "start"]) == EXIT_OK
+        assert started == [True], "scheduler.start() must still be called"
+
     def test_scheduler_start_config_error_aborts(self, capsys, monkeypatch):
         def _raise(session):
             raise ConfigError("bad tz")
