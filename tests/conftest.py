@@ -134,6 +134,32 @@ def portable_engine(request, main_db_path):
             Base.metadata.drop_all(engine)
             engine.dispose()
 
+
+@pytest.fixture
+def jobstore_url(data_dir) -> str:
+    """A file-backed SQLite URL for an APScheduler SQLAlchemyJobStore.
+
+    File-backed, not :memory:, because the RUN-04 catch-up tests must build a
+    scheduler, stop it, and build a SECOND scheduler over the SAME persisted
+    jobstore — an in-memory store would vanish between the two and the test
+    would pass for the wrong reason.
+    """
+    return f"sqlite:///{data_dir / 'jobs.db'}"
+
+
+@pytest.fixture
+def jobstore(jobstore_url):
+    """A real SQLAlchemyJobStore over jobstore_url, disposed after the test."""
+    from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+
+    store = SQLAlchemyJobStore(url=jobstore_url)
+    yield store
+    try:
+        store.shutdown()
+    except Exception:  # noqa: BLE001 - store may never have been started
+        pass
+
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 def _read_fixture(subdir: str, name: str, suffix: str) -> str:
