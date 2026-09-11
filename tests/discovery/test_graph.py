@@ -1137,3 +1137,108 @@ class TestGraph:
         assert run.tokens_out == 60
         assert run.finished_at is not None
         assert "B@score" in run.error_summary
+
+
+# ---------------------------------------------------------------------------
+# Plan 03-04 Task 1: the spend cap inside the graph (RUN-08)
+# ---------------------------------------------------------------------------
+
+class TestSpendCapInGraph:
+    """The run-level spend cap as _score_batch/process_employer enforce it.
+
+    The tracker's per-call usage is 10 prompt / 20 completion tokens, so a
+    listing's cost is cost_for_usage(triage model) + cost_for_usage(scoring
+    model). Caps are derived from the price table, never magic numbers.
+    """
+
+    def test_score_batch_stops_at_cap(self, default_criteria):
+        """A tracker that trips mid-batch stops scoring: listings scored before
+        the cap are returned, the blocked listing is NOT, and the model calls
+        for anything after the trip never happen."""
+        from huntloop.pricing.table import cost_for_usage
+        from huntloop.scoring.spend_cap import SpendTracker
+
+        per_listing = (
+            cost_for_usage("gpt-4o-mini", 10, 20)   # triage call
+            + cost_for_usage("gpt-4o", 10, 20)      # dimension call
+        )
+        # Exactly two listings fit under the cap; the third's first check trips.
+        tracker = SpendTracker(cap_usd=per_listing * 2)
+
+        listings = [make_listing(f"cap-{i}") for i in range(5)]
+        client = RecordingClient(triage=[TRIAGE_KEEP] * 5, scoring=[dims_response(4)] * 5)
+        state = {"criteria_version": 1, "no_score": False}
+
+        out = nodes_mod._score_batch(
+            listings, default_criteria, state,
+            llm_client=client, spend_tracker=tracker,
+        )
+
+        assert len(out.listings) == 2
+        assert out.capped is True
+        # Two completed listings = one triage + one dimension call each. The
+        # third listing's calls were refused before they were made.
+        assert len(client.calls) == 4
+        # The tracker saw exactly those four calls' usage.
+        assert tracker.tokens_in == 40
+        assert tracker.tokens_out == 80
+
+    def test_score_batch_without_tracker_is_unchanged(self, default_criteria):
+        """spend_tracker=None keeps the pre-cap behaviour identical."""
+        listings = [make_listing(f"nocap-{i}") for i in range(5)]
+        client = RecordingClient(triage=[TRIAGE_KEEP] * 5, scoring=[dims_response(4)] * 5)
+        state = {"criteria_version": 1, "no_score": False}
+
+        out = nodes_mod._score_batch(
+            listings, default_criteria, state,
+            llm_client=client, spend_tracker=None,
+        )
+
+        assert len(out.listings) == 5
+        assert out.capped is False
+        assert len(client.calls) == 10
+
+    def test_capped_employer_is_not_errored(self, sessionmaker, default_criteria, monkeypatch):
+        """A cap trip inside process_employer marks the employer capped, NOT
+        errored -- a budget stop must not push the run to PARTIAL -- and the
+        counters accumulated before the cap tripped are preserved."""
+        from huntloop.pricing.table import cost_for_usage
+        from huntloop.scoring.spend_cap import SpendTracker
+
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            company = make_company(session, "CapCo", slug="capco")
+        finally:
+            session.close()
+        run_id = start_run(sessionmaker)
+
+        listings = [make_listing("cap-keep"), make_listing("cap-blocked")]
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"capco": listings}),
+        )
+
+        # Room for exactly one listing; the second is blocked by the cap.
+        tracker = SpendTracker(
+            cap_usd=cost_for_usage("gpt-4o-mini", 10, 20) + cost_for_usage("gpt-4o", 10, 20)
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP] * 2, scoring=[dims_response(4)] * 2)
+
+        result = process_employer(
+            employer_state(sessionmaker, company.id, run_id),
+            sessionmaker=sessionmaker,
+            llm_client=client,
+            http_client=MagicMock(),
+            spend_tracker=tracker,
+        )["employer_results"][0]
+
+        assert result["capped"] is True
+        assert result.get("error") is None
+        # Counters from before the cap tripped survive in the result.
+        assert result["fetched"] == 2
+        assert result["scored"] == 1
+        # The cap-blocked listing was never written: write_listing persists
+        # every ScoredListing it is handed, so dropping it is the only correct
+        # mechanism (the 03-04 plan's load-bearing detail).
+        assert result["written"] == 1
