@@ -1,0 +1,52 @@
+"""FastAPI application factory (Phase 4).
+
+Every other Phase 4 API plan builds on `create_app()`: it mounts all seven
+/api routers up front (six as empty stubs their owning plans fill) so later
+plans only add routes to files they own, and it conditionally serves the
+built React frontend from web/dist when that directory exists (plan 04-11
+fills it; tests and bare-backend runs never require a frontend build).
+
+No cross-origin middleware by design: the frontend is served same-origin
+from this app in production and via a Vite dev proxy in development
+(private-network, no-auth — PROJECT.md delivery constraints).
+"""
+
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+
+from huntloop.api.routers import (
+    companies,
+    criteria,
+    dashboard,
+    diagnostics,
+    jobs,
+    runs,
+    settings,
+)
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="HuntLoop API")
+
+    @app.get("/api/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    app.include_router(criteria.router)
+    app.include_router(companies.router)
+    app.include_router(jobs.router)
+    app.include_router(runs.router)
+    app.include_router(dashboard.router)
+    app.include_router(settings.router)
+    app.include_router(diagnostics.router)
+
+    # Serve the built frontend only when it exists. The guard keeps tests and
+    # bare-backend runs independent of any frontend build (plan 04-11 fills
+    # web/dist; 04-11's Dockerfile stage lands dist at the path computed here).
+    dist = Path(__file__).resolve().parents[2] / "web" / "dist"
+    if dist.is_dir():
+        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+
+    return app

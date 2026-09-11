@@ -22,6 +22,8 @@ dependencies = [
     "playwright==1.62.0",
     "PyYAML==6.0.3",
     "apscheduler==3.11.3",
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
 ]
 
 [project.scripts]
