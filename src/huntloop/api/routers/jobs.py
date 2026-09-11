@@ -32,6 +32,7 @@ from huntloop.db.models import (
     JobStatus,
     StatusEvent,
 )
+from huntloop.db.repository import JobRepository
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -300,3 +301,62 @@ def get_job(
         ],
         notes=[NoteOut(id=n.id, text=n.text, created_at=n.created_at) for n in notes],
     )
+
+
+# ---------------------------------------------------------------------------
+# Writes — one-action transitions and freeform notes
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/{job_id}/status", response_model=StatusUpdateOut)
+def update_status(
+    job_id: uuid.UUID, body: StatusPatch, session: Session = Depends(get_session)
+) -> StatusUpdateOut:
+    """Move a listing to any fixed stage in one action (D-10, TRAK-01).
+
+    No adjacency validation and no confirmation dialog: the fixed stage set IS
+    the contract, and the timestamped event is recorded silently (TRAK-03).
+    The write goes through ``JobRepository.set_status`` — the single owner of
+    the ``jobs.status`` + ``StatusEvent`` pair — never a raw assignment, so the
+    CLI and API share one truth (Phase 1 contract).
+    """
+    if session.get(Job, job_id) is None:
+        raise HTTPException(status_code=404, detail="listing not found")
+
+    JobRepository(session).set_status(job_id, body.status)
+    session.commit()
+
+    event = (
+        session.execute(
+            select(StatusEvent)
+            .where(StatusEvent.job_id == job_id)
+            .order_by(StatusEvent.changed_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .one()
+    )
+    return StatusUpdateOut(
+        id=job_id, status=body.status.value, changed_at=event.changed_at
+    )
+
+
+@router.post("/{job_id}/notes", status_code=201, response_model=NoteOut)
+def add_note(
+    job_id: uuid.UUID, body: NoteCreate, session: Session = Depends(get_session)
+) -> NoteOut:
+    """Add a freeform note to a listing (TRAK-02) — explicit feedback.
+
+    Notes are stored with ``source=JOB_NOTE`` so the future adaptive loop can
+    separate listing notes from general chat feedback.
+    """
+    if session.get(Job, job_id) is None:
+        raise HTTPException(status_code=404, detail="listing not found")
+
+    note = FeedbackNote(
+        job_id=job_id, text=body.text, source=FeedbackSource.JOB_NOTE
+    )
+    session.add(note)
+    session.commit()
+    session.refresh(note)
+    return NoteOut(id=note.id, text=note.text, created_at=note.created_at)
