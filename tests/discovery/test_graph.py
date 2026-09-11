@@ -13,6 +13,7 @@ import inspect
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import get_args, get_type_hints
 from unittest.mock import MagicMock
 
@@ -41,6 +42,8 @@ from huntloop.graph.nodes import (
     run_status,
 )
 from huntloop.graph.state import DiscoveryState, EmployerResult
+from huntloop.llm.client import LlmUsage
+from huntloop.scoring.spend_cap import SpendTracker
 
 NOW = datetime.now(timezone.utc)
 
@@ -1242,3 +1245,86 @@ class TestSpendCapInGraph:
         # every ScoredListing it is handed, so dropping it is the only correct
         # mechanism (the 03-04 plan's load-bearing detail).
         assert result["written"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Plan 03-04 Task 2: the tracker as the authoritative ledger, RunStatus.CAPPED
+# ---------------------------------------------------------------------------
+
+class TestSpendCapLedger:
+    """run_status CAPPED and finalize_run's tracker-sourced cost/notes (RUN-05/07/08)."""
+
+    def test_run_status_capped_when_any_employer_capped(self):
+        """Any capped employer with no errors -> CAPPED (wins over SUCCESS)."""
+        results: list[EmployerResult] = [
+            {"company_id": "a", "capped": True},
+            {"company_id": "b"},
+        ]
+        assert run_status(results) is RunStatus.CAPPED
+
+    def test_run_status_partial_beats_capped(self):
+        """A genuine failure is more actionable than a budget stop: an errored
+        employer plus a capped one is PARTIAL, not CAPPED."""
+        results: list[EmployerResult] = [
+            {"company_id": "a", "error": "RuntimeError: x", "stage": "fetch"},
+            {"company_id": "b", "capped": True},
+        ]
+        assert run_status(results) is RunStatus.PARTIAL
+
+    def test_finalize_run_records_tracker_cost(self, sessionmaker, default_criteria):
+        """finalize_run persists the tracker's Decimal cost and the tracker's
+        token totals (not the per-employer sums), a CAPPED status, and an
+        error_summary naming the spend cap."""
+        seed_criteria(sessionmaker, default_criteria)
+        run_id = start_run(sessionmaker)
+
+        # gpt-4o-mini at 0.15/M input: 82000 tokens -> exactly $0.0123.
+        tracker = SpendTracker(cap_usd=Decimal("0.05"))
+        tracker.record(LlmUsage(prompt_tokens=82000, completion_tokens=0, model="gpt-4o-mini"))
+
+        results: list[EmployerResult] = [
+            {"company_id": "a", "company_name": "A", "fetched": 2, "after_dedup": 2,
+             "after_deterministic": 2, "after_triage": 1, "scored": 1, "written": 1,
+             "updated": 0, "failed": 0, "tokens_in": 10, "tokens_out": 20,
+             "capped": True},
+        ]
+        finalize_run(
+            {"run_id": str(run_id), "employer_results": results},
+            sessionmaker=sessionmaker,
+            spend_tracker=tracker,
+        )
+
+        run = get_run(sessionmaker, run_id)
+        assert run.status is RunStatus.CAPPED
+        # Numeric(12,6): compare Decimals, never floats.
+        assert run.cost_usd == Decimal("0.0123")
+        # The tracker's tokens win over the employer result's (the tracker
+        # counted the triage call of the listing the cap then blocked).
+        assert run.tokens_in == 82000
+        assert run.tokens_out == 0
+        assert "spend cap" in run.error_summary
+
+    def test_finalize_run_notes_unpriced_models(self, sessionmaker, default_criteria):
+        """A model absent from the price table is disclosed in error_summary —
+        a $0.00 that actually means 'no price entry' must not look like a
+        free run (RUN-07 honesty)."""
+        seed_criteria(sessionmaker, default_criteria)
+        run_id = start_run(sessionmaker)
+
+        tracker = SpendTracker()
+        tracker.record(LlmUsage(prompt_tokens=10, completion_tokens=20, model="mystery-model"))
+
+        results: list[EmployerResult] = [
+            {"company_id": "a", "company_name": "A", "scored": 1, "written": 1,
+             "tokens_in": 10, "tokens_out": 20},
+        ]
+        finalize_run(
+            {"run_id": str(run_id), "employer_results": results},
+            sessionmaker=sessionmaker,
+            spend_tracker=tracker,
+        )
+
+        run = get_run(sessionmaker, run_id)
+        assert "mystery-model" in run.error_summary
+        assert "no price table entry" in run.error_summary
+        assert run.cost_usd is not None
