@@ -1,10 +1,14 @@
 """Phase 3 scheduling/spend-cap config contracts (RUN-01, RUN-04, RUN-08)."""
 
 import os
+from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
+import sqlalchemy
 from huntloop.config import ConfigError, load_config, parse_run_at
+from huntloop.db.models import Run, RunStatus, RunTrigger
 
 
 @pytest.fixture(autouse=True)
@@ -95,3 +99,36 @@ class TestRunSpendCapUsd:
         monkeypatch.setenv("HUNTLOOP_RUN_SPEND_CAP_USD", "abc")
         with pytest.raises(ConfigError, match="HUNTLOOP_RUN_SPEND_CAP_USD"):
             load_config()
+
+
+class TestRunEnums:
+    """RUN-03 / RUN-04 / RUN-08 enum members and their schema neutrality."""
+
+    def test_new_members_exist_with_exact_values(self):
+        assert RunStatus.SKIPPED.value == "skipped"
+        assert RunStatus.CAPPED.value == "capped"
+        assert RunTrigger.CATCH_UP.value == "catch_up"
+
+    def test_rendered_enum_lengths_unchanged(self):
+        # SQLAlchemy's non-native Enum renders VARCHAR(max(len(name))). Today's
+        # maxima are RUNNING/PARTIAL=7 and SCHEDULED=9; the new names (SKIPPED=7,
+        # CAPPED=6, CATCH_UP=8) fit within them, so no column type changes and
+        # no migration is required. This guard keeps a future rename from
+        # silently requiring one.
+        assert sqlalchemy.Enum(RunStatus, native_enum=False).length == 7
+        assert sqlalchemy.Enum(RunTrigger, native_enum=False).length == 9
+
+    def test_skipped_and_catch_up_round_trip(self, main_session):
+        run = Run(
+            id=uuid4(),
+            trigger=RunTrigger.CATCH_UP,
+            status=RunStatus.SKIPPED,
+            started_at=datetime.now(UTC),
+        )
+        main_session.add(run)
+        main_session.flush()
+        main_session.expire(run)
+
+        reloaded = main_session.get(Run, run.id)
+        assert reloaded.trigger == RunTrigger.CATCH_UP
+        assert reloaded.status == RunStatus.SKIPPED
