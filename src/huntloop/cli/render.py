@@ -88,5 +88,87 @@ def render_jobs_table(jobs) -> str:
             
         url = j.url
         lines.append(f"{score:<5} {title:<30} {comp:<20} {loc:<15} {flags_str:<20} {url}")
-        
+
     return "\n".join(lines)
+
+
+# One row per run. Same single-source-of-truth rule as RUN_FIELDS above: the
+# human table and the JSON list both iterate this tuple, so a column added for
+# the CLI is automatically present for Phase 4's API.
+RUN_HISTORY_FIELDS: tuple[tuple[str, str], ...] = (
+    ("started_at", "started"),
+    ("trigger", "trigger"),
+    ("status", "status"),
+    ("companies_checked", "employers"),
+    ("listings_fetched", "fetched"),
+    ("after_deterministic", "filtered"),
+    ("after_triage", "triaged"),
+    ("scored", "scored"),
+    ("new_jobs_written", "written"),
+    ("tokens_in", "tok_in"),
+    ("tokens_out", "tok_out"),
+    ("cost_usd", "cost"),
+)
+
+
+def _enum_value(v):
+    """Enum members render as their value; everything else unchanged."""
+    return v.value if hasattr(v, "value") else v
+
+
+def _fmt_cost(value) -> str:
+    """Always four decimal places, never a bare float repr.
+
+    cost_usd is Numeric(12,6) -> Decimal. Formatting through Decimal (not float)
+    keeps a six-place value from surfacing as 0.012300000000000001.
+    """
+    if value is None:
+        return "$0.0000"
+    return f"${Decimal(value):.4f}"
+
+
+def render_run_history_human(runs) -> str:
+    if not runs:
+        return (
+            "no runs recorded yet. Start the scheduler with `huntloop scheduler start`, "
+            "or run discovery now with `huntloop run`."
+        )
+    # Drift guard: the line below hand-picks a readable subset of columns in a
+    # fixed, curated order. This check keeps that subset honest against the
+    # tuple both views share -- rename or drop a column in RUN_HISTORY_FIELDS
+    # without updating the human line and this raises at import time. (Same
+    # single-source-of-truth rule as the RUN_FIELDS comment above.)
+    _human_line_columns = (
+        "started_at", "trigger", "status", "new_jobs_written",
+        "scored", "listings_fetched", "cost_usd",
+    )
+    assert not (set(_human_line_columns) - set(dict(RUN_HISTORY_FIELDS))), (
+        "render_run_history_human prints columns missing from RUN_HISTORY_FIELDS"
+    )
+    lines = []
+    for run in runs:
+        started = run.started_at.strftime("%Y-%m-%d %H:%M") if run.started_at else "--"
+        lines.append(
+            f"{started}  {_enum_value(run.trigger):<9}  {_enum_value(run.status):<8}  "
+            f"written={run.new_jobs_written or 0:<4} "
+            f"scored={run.scored or 0:<4} "
+            f"fetched={run.listings_fetched or 0:<5} "
+            f"{_fmt_cost(run.cost_usd)}"
+        )
+        # A SKIPPED or CAPPED run is only useful if the reason travels with it --
+        # that is the whole point of "a quiet week must be unambiguous".
+        if run.error_summary:
+            first = run.error_summary.splitlines()[0]
+            lines.append(f"        ! {first}")
+    return "\n".join(lines)
+
+
+def render_run_history_json(runs) -> str:
+    out = []
+    for run in runs:
+        row = {name: _enum_value(getattr(run, name, None)) for name, _ in RUN_HISTORY_FIELDS}
+        row["run_id"] = str(run.id)
+        row["finished_at"] = run.finished_at
+        row["error_summary"] = run.error_summary
+        out.append(row)
+    return json.dumps(out, indent=2, default=_json_default)
