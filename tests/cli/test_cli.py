@@ -390,6 +390,122 @@ class TestRunHistoryRender:
         assert "0.012300000000000001" not in out
 
 
+class TestRunHistoryCommand:
+    """03-05 Task 2: `huntloop run history` must work without breaking bare
+    `huntloop run` (Phase 2's dispatch must survive the new sub-subparser)."""
+
+    def _seed_and_patch(self, main_engine, monkeypatch):
+        """Seed two finished Run rows, then point the CLI at this test engine."""
+        from huntloop.db.base import make_session_factory
+        from huntloop.db.models import RunStatus, RunTrigger
+        from huntloop.db.repository import RunRepository
+
+        factory = make_session_factory(main_engine)
+        session = factory()
+        try:
+            repo = RunRepository(session)
+            run1 = repo.start(RunTrigger.SCHEDULED)
+            repo.finish(
+                run1.id,
+                status=RunStatus.SUCCESS,
+                companies_checked=2, listings_fetched=10, after_dedup=9,
+                after_deterministic=7, after_triage=5, scored=5,
+                new_jobs_written=3, tokens_in=1200, tokens_out=2400,
+                cost_usd=decimal.Decimal("0.0123"),
+            )
+            run2 = repo.start(RunTrigger.MANUAL)
+            repo.finish(
+                run2.id,
+                status=RunStatus.PARTIAL,
+                companies_checked=1, listings_fetched=4, after_dedup=4,
+                after_deterministic=4, after_triage=2, scored=2,
+                new_jobs_written=1, tokens_in=500, tokens_out=900,
+                cost_usd=decimal.Decimal("0.4567"),
+                error_summary="[X] fetch: boom",
+            )
+            session.commit()
+        finally:
+            session.close()
+        monkeypatch.setattr("huntloop.cli.run._make_session_factory", lambda: factory)
+        return factory
+
+    def test_run_history_human_output(self, capsys, main_engine, monkeypatch):
+        self._seed_and_patch(main_engine, monkeypatch)
+        assert main(["run", "history"]) == EXIT_OK
+        out, _ = capsys.readouterr()
+        assert "scheduled" in out
+        assert "manual" in out
+        assert "success" in out
+        assert "partial" in out
+        assert "$0.0123" in out
+        assert "$0.4567" in out
+
+    def test_run_history_json_output(self, capsys, main_engine, monkeypatch):
+        self._seed_and_patch(main_engine, monkeypatch)
+        assert main(["run", "history", "--json"]) == EXIT_OK
+        out, _ = capsys.readouterr()
+        data = json.loads(out)
+        assert len(data) == 2
+        assert data[0]["run_id"]
+        assert "cost_usd" in data[0]
+        assert "status" in data[0]
+
+    def test_run_history_limit_is_passed(self, capsys, main_engine, monkeypatch):
+        from huntloop.db.base import make_session_factory
+        from huntloop.db.repository import RunRepository
+
+        factory = make_session_factory(main_engine)
+        monkeypatch.setattr("huntloop.cli.run._make_session_factory", lambda: factory)
+        seen = {}
+
+        def _record(self_repo, limit=10):
+            seen["limit"] = limit
+            return []
+
+        monkeypatch.setattr(RunRepository, "list_recent", _record)
+        assert main(["run", "history", "--limit", "3"]) == EXIT_OK
+        assert seen["limit"] == 3
+
+    def test_bare_run_still_dispatches_to_cmd_run(self, capsys, monkeypatch):
+        """The regression this task most risks: adding a `run` sub-subparser
+        with required=True would break every existing bare `huntloop run`."""
+        called = {}
+
+        def _fake_cmd_run(args):
+            called["args"] = args
+            return EXIT_OK
+
+        monkeypatch.setattr("huntloop.cli.main.cmd_run", _fake_cmd_run)
+        assert main(["run", "--no-score"]) == EXIT_OK
+        assert "args" in called, "bare `huntloop run` must still reach cmd_run"
+        assert called["args"].no_score is True
+
+    def test_run_history_empty_db_exits_zero(self, capsys, main_engine, monkeypatch):
+        from huntloop.db.base import make_session_factory
+
+        factory = make_session_factory(main_engine)
+        monkeypatch.setattr("huntloop.cli.run._make_session_factory", lambda: factory)
+        assert main(["run", "history"]) == EXIT_OK
+        out, _ = capsys.readouterr()
+        assert "no runs recorded" in out
+
+
+def test_run_history_human_output(capsys, main_engine, monkeypatch):
+    """Module-level alias so BOTH node IDs resolve:
+
+    - tests/cli/test_cli.py::test_run_history_human_output -- the exact node ID
+      named in 03-VALIDATION.md's per-task verification map. pytest does not
+      resolve class-scoped tests through a class-less node ID (verified live),
+      so the validation contract's command needs this module-level function.
+    - tests/cli/test_cli.py::TestRunHistoryCommand::test_run_history_human_output
+      -- 03-05 Task 2's own acceptance criterion.
+
+    Same plan-internal criterion inconsistency as 03-01/03-04; this alias makes
+    both executable commands green without duplicating test logic.
+    """
+    TestRunHistoryCommand().test_run_history_human_output(capsys, main_engine, monkeypatch)
+
+
 class TestJobsCommand:
     def test_jobs_list_empty(self, capsys, main_session):
         assert main(["jobs", "list"]) == EXIT_OK
