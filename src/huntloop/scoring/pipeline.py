@@ -22,6 +22,7 @@ from huntloop.scoring.config import active_scoring_config
 from huntloop.scoring.dimensions import score_dimensions
 from huntloop.scoring.filters import apply_deterministic_filters
 from huntloop.scoring.flags import compute_flags
+from huntloop.scoring.spend_cap import SpendCapReached, SpendTracker  # noqa: F401
 from huntloop.scoring.triage import triage_listing
 
 
@@ -50,6 +51,7 @@ def score_listing(
     *,
     criteria_version: int | None,
     now=None,
+    spend_tracker: SpendTracker | None = None,
 ) -> ScoredListing:
     """Run one listing through the full evaluation pipeline.
 
@@ -60,6 +62,14 @@ def score_listing(
 
     This function never mutates the database. It takes no session and imports
     no repository.
+
+    RUN-08: when `spend_tracker` is supplied, the cap is checked immediately
+    before EACH of the two model calls, and each call's usage is recorded the
+    moment it returns. A trip raises SpendCapReached out of this function on
+    purpose — it does NOT return a ScoredListing with a drop_reason, because
+    write_batch persists every ScoredListing it is handed (TRAK-06), and the
+    locked decision is that a cap-blocked listing is held back this run and
+    naturally retried on the next one via the existing dedup path.
     """
     # 1. Deterministic filters
     outcome = apply_deterministic_filters(listing, criteria, now=now)
@@ -72,9 +82,13 @@ def score_listing(
             drop_reason=outcome.first_drop.detail if outcome.first_drop else "dropped by filters",
         )
 
-    # 2. Triage
+    # 2. Triage — cap checked BEFORE the call, usage recorded the moment it returns.
+    if spend_tracker is not None:
+        spend_tracker.check()
     verdict = triage_listing(client, listing, criteria)
     usage = (verdict.usage,) if verdict.usage else ()
+    if spend_tracker is not None:
+        spend_tracker.record(verdict.usage)
     
     if not verdict.keep:
         return ScoredListing(
@@ -85,10 +99,16 @@ def score_listing(
             usage=usage,
         )
 
-    # 3. Dimensions
+    # 3. Dimensions — the expensive call. Pitfall C: this second check is not
+    #    redundant with the one above; a listing can pass cheap triage and only
+    #    then push the run over the cap.
+    if spend_tracker is not None:
+        spend_tracker.check()
     try:
         response, call = score_dimensions(client, listing, criteria)
         usage = usage + (call.usage,)
+        if spend_tracker is not None:
+            spend_tracker.record(call.usage)
     except LlmResponseError as exc:
         return ScoredListing(
             listing=listing,
