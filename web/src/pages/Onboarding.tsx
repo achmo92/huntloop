@@ -5,18 +5,8 @@ import { api, apiPost } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { DescribeStep } from "./onboarding/DescribeStep"
 import { CriteriaForm, type CriteriaPayload } from "./onboarding/CriteriaForm"
-
-export interface CriteriaVersion {
-  version: number
-  created_at: string
-  source: string | null
-  payload: unknown
-}
-
-export interface CriteriaCurrentResponse {
-  current: CriteriaVersion | null
-  total_versions: number
-}
+import { EmployerProposalsStep } from "./onboarding/EmployerProposalsStep"
+import type { CriteriaCurrentResponse } from "./onboarding/types"
 
 type Step = 1 | 2 | 3
 
@@ -150,15 +140,7 @@ export default function Onboarding() {
       ) : null}
 
       {step === 3 ? (
-        <section className="grid gap-4">
-          <h2 className="font-heading text-lg font-medium">Employers</h2>
-          <p className="text-sm text-muted-foreground">
-            Next, based on your criteria we'll suggest employers to watch.
-          </p>
-          <Button type="button" onClick={() => navigate("/criteria")}>
-            Go to your criteria
-          </Button>
-        </section>
+        <EmployerProposalsStep onDone={() => navigate("/criteria")} />
       ) : null}
     </div>
   )

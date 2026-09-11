@@ -144,7 +144,11 @@ describe("Onboarding", () => {
   it("saves via POST /api/criteria and shows the new version", async () => {
     const user = userEvent.setup()
     mockedApi.mockResolvedValue(EXISTING_RESPONSE)
-    mockedApiPost.mockResolvedValueOnce({ version: 2 })
+    mockedApiPost.mockImplementation(async (path) => {
+      if (path === "/api/criteria") return { version: 2 }
+      if (path === "/api/onboarding/propose-employers") return { candidates: [] }
+      return {}
+    })
     renderOnboarding(<Onboarding />)
 
     await screen.findByLabelText("Currency")
