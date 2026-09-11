@@ -13,7 +13,6 @@ import json
 import threading
 import time
 import uuid
-from collections import namedtuple
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -82,15 +81,10 @@ class _Completions:
         else:
             raise AssertionError(f"unknown system prompt: {system[:80]!r}")
 
-        Choice = namedtuple("Choice", ["message"])
-        Message = namedtuple("Message", ["content"])
-        Usage = namedtuple("Usage", ["prompt_tokens", "completion_tokens"])
-
-        class FakeCompletion:
-            choices = [Choice(message=Message(content=json.dumps(payload)))]
-            usage = Usage(prompt_tokens=10, completion_tokens=20)
-
-        return FakeCompletion()
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=20),
+        )
 
 
 class _Chat:
@@ -237,8 +231,9 @@ def test_run_discovery_without_rows_uses_env_model(main_engine, monkeypatch):
 
 
 def _watcher():
-    import huntloop.scheduler.build as build
+    import importlib
 
+    build = importlib.import_module("huntloop.scheduler.build")
     assert hasattr(build, "watch_settings_and_reschedule"), (
         "huntloop.scheduler.build.watch_settings_and_reschedule must exist (UI-04)"
     )

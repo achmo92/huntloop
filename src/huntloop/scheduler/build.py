@@ -9,13 +9,15 @@ textual reference.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import datetime, timezone as dt_timezone
 
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from huntloop.config import Config, load_config, parse_run_at
+from huntloop.config import Config, load_config, load_effective_config, parse_run_at
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,60 @@ def build_scheduler(
         )
 
     return scheduler
+
+
+def watch_settings_and_reschedule(
+    scheduler,
+    sessionmaker,
+    *,
+    poll_seconds: float = 30.0,
+    stop: threading.Event | None = None,
+) -> None:
+    """Follow schedule Setting changes and reschedule the daily job live.
+
+    D-15: a schedule change made in the UI takes effect in the running scheduler
+    without a restart. Each poll resolves the overlay, builds the trigger it
+    implies, and calls `reschedule_job` only when the fingerprint actually
+    changed — so an unchanged schedule causes no job churn.
+
+    Takes ANY scheduler exposing `get_job`/`reschedule_job` (BlockingScheduler,
+    BackgroundScheduler, or a test fake). Intended to run as a daemon thread;
+    the caller owns the `stop` event and thread lifetime.
+    """
+    def _poll_once() -> None:
+        session = sessionmaker()
+        try:
+            cfg = load_effective_config(session)
+        finally:
+            session.close()
+
+        expected = build_trigger(cfg)
+        current = scheduler.get_job(JOB_ID)
+        if current is None:
+            return
+        current_fp = _trigger_fingerprint(current.trigger)
+        expected_fp = _trigger_fingerprint(expected)
+        if current_fp != expected_fp:
+            scheduler.reschedule_job(JOB_ID, trigger=expected)
+            logger.info(
+                "settings changed (%s -> %s); rescheduled %s",
+                current_fp,
+                expected_fp,
+                JOB_ID,
+            )
+
+    while not (stop is not None and stop.is_set()):
+        # A transient failure (e.g. the settings table mid-migration) must not
+        # kill the watcher — the next poll retries.
+        try:
+            _poll_once()
+        except Exception:  # noqa: BLE001
+            logger.exception("settings watcher poll failed; will retry")
+
+        if stop is None:
+            time.sleep(poll_seconds)
+        elif stop.wait(poll_seconds):
+            return
 
 
 def next_fire_time(cfg: Config | None = None, *, after: datetime | None = None) -> datetime:

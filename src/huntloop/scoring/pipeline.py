@@ -52,6 +52,8 @@ def score_listing(
     criteria_version: int | None,
     now=None,
     spend_tracker: SpendTracker | None = None,
+    triage_model: str | None = None,
+    scoring_model: str | None = None,
 ) -> ScoredListing:
     """Run one listing through the full evaluation pipeline.
 
@@ -85,7 +87,7 @@ def score_listing(
     # 2. Triage — cap checked BEFORE the call, usage recorded the moment it returns.
     if spend_tracker is not None:
         spend_tracker.check()
-    verdict = triage_listing(client, listing, criteria)
+    verdict = triage_listing(client, listing, criteria, model=triage_model)
     usage = (verdict.usage,) if verdict.usage else ()
     if spend_tracker is not None:
         spend_tracker.record(verdict.usage)
@@ -105,7 +107,7 @@ def score_listing(
     if spend_tracker is not None:
         spend_tracker.check()
     try:
-        response, call = score_dimensions(client, listing, criteria)
+        response, call = score_dimensions(client, listing, criteria, model=scoring_model)
         usage = usage + (call.usage,)
         if spend_tracker is not None:
             spend_tracker.record(call.usage)

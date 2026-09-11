@@ -563,6 +563,8 @@ class TestJobsCommand:
 
 class TestSchedulerCommand:
     def test_scheduler_start_builds_and_starts(self, capsys, monkeypatch):
+        from huntloop.config import load_config
+
         started = []
 
         class FakeScheduler:
@@ -575,14 +577,19 @@ class TestSchedulerCommand:
         monkeypatch.setattr(
             "huntloop.cli.scheduler.build_scheduler", lambda cfg: FakeScheduler()
         )
+        # 04-06: boot resolves the settings overlay; pin it so no DB schema is
+        # required to exercise the start path.
+        monkeypatch.setattr(
+            "huntloop.cli.scheduler.load_effective_config", lambda session: load_config()
+        )
         assert main(["scheduler", "start"]) == EXIT_OK
         assert started == [True], "scheduler.start() must be called exactly once"
 
     def test_scheduler_start_config_error_aborts(self, capsys, monkeypatch):
-        def _raise(*args, **kwargs):
+        def _raise(session):
             raise ConfigError("bad tz")
 
-        monkeypatch.setattr("huntloop.cli.scheduler.load_config", _raise)
+        monkeypatch.setattr("huntloop.cli.scheduler.load_effective_config", _raise)
         assert main(["scheduler", "start"]) == EXIT_ABORTED
         out, err = capsys.readouterr()
         assert "bad tz" in err

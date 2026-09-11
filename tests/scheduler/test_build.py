@@ -100,7 +100,9 @@ def test_catchup_fires_once_after_multi_day_gap(jobstore_url, monkeypatch):
         fires.append(datetime.now(UTC))
 
     monkeypatch.setattr(jobs_module, "execute_scheduled_run", _record)
-    monkeypatch.setattr(jobs_module, "load_config", lambda: cfg)
+    # 04-06: the entrypoint now resolves config through the overlay; pin it so
+    # no DB engine is needed for this fire-counting test.
+    monkeypatch.setattr(jobs_module, "load_effective_config", lambda session: cfg)
     monkeypatch.setattr(jobs_module, "get_engine", lambda: None)
 
     # Build #1 persists the job normally.

@@ -106,6 +106,9 @@ def process_employer(
     rendered_fetcher=None,
     now=None,
     spend_tracker=None,
+    triage_model=None,
+    scoring_model=None,
+    extraction_model=None,
 ) -> dict:
     """Process a single employer end to end: fetch -> dedup -> score -> write.
 
@@ -130,6 +133,7 @@ def process_employer(
         fetch_result, path = _fetch_for_employer(
             company, session, llm_client=llm_client, http_client=http_client,
             static_fetcher=static_fetcher, rendered_fetcher=rendered_fetcher,
+            extraction_model=extraction_model,
         )
         result["path"] = path
 
@@ -154,6 +158,7 @@ def process_employer(
         scored_batch = _score_batch(
             listings, criteria, state, llm_client=llm_client, now=now,
             spend_tracker=spend_tracker,
+            triage_model=triage_model, scoring_model=scoring_model,
         )
         result["after_deterministic"] = scored_batch.after_deterministic
         result["after_triage"] = scored_batch.after_triage
@@ -253,6 +258,7 @@ def finalize_run(state, *, sessionmaker: sessionmaker, spend_tracker=None) -> di
 
 def _fetch_for_employer(
     company, session, *, llm_client, http_client, static_fetcher, rendered_fetcher,
+    extraction_model=None,
 ):
     """Fetch listings for an employer via its ATS adapter, else the crawl fallback.
 
@@ -282,7 +288,7 @@ def _fetch_for_employer(
             # honest way to produce listings; fail this employer at this stage.
             raise RuntimeError("crawl path requires an LLM client for extraction")
 
-        listings = extract_listings(llm_client, crawl_result)
+        listings = extract_listings(llm_client, crawl_result, model=extraction_model)
         fetch_result = to_fetch_result(listings, crawl_result)
         if crawl_result.page_hash:
             save_crawl_hash(session, company, crawl_result.page_hash)
@@ -320,7 +326,7 @@ def _dedupe_within_batch(company, listings):
 
 
 def _score_batch(listings, criteria, state, *, llm_client, now=None,
-                 spend_tracker=None) -> _ScoreBatchOut:
+                 spend_tracker=None, triage_model=None, scoring_model=None) -> _ScoreBatchOut:
     """Run every listing through the scoring pipeline (or filters-only mode).
 
     The per-stage survivor counts are computed here because their meaning
@@ -355,6 +361,7 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None,
                     llm_client, listing, criteria,
                     criteria_version=state["criteria_version"], now=now,
                     spend_tracker=spend_tracker,
+                    triage_model=triage_model, scoring_model=scoring_model,
                 )
             except SpendCapReached:
                 # Stop this employer's batch here. The listing is NOT appended:

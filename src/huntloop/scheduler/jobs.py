@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from huntloop.config import Config, load_config
+from huntloop.config import Config, load_effective_config
 from huntloop.db.base import get_engine, make_session_factory
 from huntloop.db.models import Run, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
@@ -138,7 +138,17 @@ def execute_scheduled_run(
 
 
 def run_scheduled_discovery() -> None:
-    """Zero-argument, top-level, picklable entrypoint APScheduler stores by reference."""
-    cfg = load_config()
+    """Zero-argument, top-level, picklable entrypoint APScheduler stores by reference.
+
+    Resolves config through the overlay (D-15): a spend cap / model / schedule
+    Setting written in the UI applies to the next scheduled or catch-up fire.
+    `execute_scheduled_run`'s cfg parameter stays injectable for tests; this
+    entrypoint feeds it the overlay-resolved config.
+    """
     sessionmaker = make_session_factory(get_engine())
+    session = sessionmaker()
+    try:
+        cfg = load_effective_config(session)
+    finally:
+        session.close()
     execute_scheduled_run(sessionmaker, cfg)

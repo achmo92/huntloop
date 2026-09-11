@@ -20,7 +20,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.types import RetryPolicy, Send
 from sqlalchemy import select
 
-from huntloop.config import load_config
+from huntloop.config import load_effective_config
 from huntloop.criteria.loader import get_active_criteria
 from huntloop.db.models import Company, Job, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
@@ -96,6 +96,9 @@ def build_graph(
     rendered_fetcher=None,
     now=None,
     spend_tracker=None,
+    triage_model=None,
+    scoring_model=None,
+    extraction_model=None,
 ):
     """Build and compile the discovery StateGraph.
 
@@ -120,6 +123,9 @@ def build_graph(
             rendered_fetcher=rendered_fetcher,
             now=now,
             spend_tracker=spend_tracker,
+            triage_model=triage_model,
+            scoring_model=scoring_model,
+            extraction_model=extraction_model,
         ),
         retry_policy=RetryPolicy(max_attempts=3),
     )
@@ -161,7 +167,15 @@ def run_discovery(
 
     now = now or datetime.now(timezone.utc)
 
-    cfg = load_config()
+    # D-15: the run resolves config through the overlay so a Setting row written
+    # in the UI (spend cap, per-stage models) applies to the very next run — no
+    # restart, no file edit. run_discovery's signature is unchanged; the overlay
+    # is internal, using the sessionmaker it already holds.
+    _cfg_session = sessionmaker()
+    try:
+        cfg = load_effective_config(_cfg_session)
+    finally:
+        _cfg_session.close()
     # Always construct a tracker, even with no cap: it is the run's cost ledger
     # first and its brake second. cap_usd=None means "measure, never stop".
     spend_tracker = SpendTracker(cap_usd=cfg.run_spend_cap_usd)
@@ -221,6 +235,9 @@ def run_discovery(
             rendered_fetcher=rendered_fetcher,
             now=now,
             spend_tracker=spend_tracker,
+            triage_model=cfg.triage_model,
+            scoring_model=cfg.scoring_model,
+            extraction_model=cfg.extraction_model,
         )
 
         initial_state: DiscoveryState = {
