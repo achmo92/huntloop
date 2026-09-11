@@ -27,7 +27,10 @@ venv/
 
 # Node / frontend
 node_modules/
+web/node_modules/
 dist/
+web/dist/
+web/coverage/
 build/
 .vite/
 *.local
