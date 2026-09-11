@@ -60,6 +60,7 @@ Migrations run automatically via the `migrate` Compose service, so these are onl
 - [`docs/architecture/data-model.md`](docs/architecture/data-model.md)
 - [`docs/operations/backup-restore.md`](docs/operations/backup-restore.md)
 - [`docs/operations/database-backends.md`](docs/operations/database-backends.md)
+- [`docs/operations/scheduling.md`](docs/operations/scheduling.md)
 
 ## Phase 2 — discovery and scoring
 
@@ -103,3 +104,25 @@ Migrations run automatically via the `migrate` Compose service, so these are onl
    ```bash
    docker compose run --rm app jobs list
    ```
+
+## Phase 3 — unattended scheduling and run health
+
+Run discovery on a daily schedule without anyone at the terminal:
+
+```bash
+docker compose up -d scheduler          # daily run at HUNTLOOP_RUN_AT in HUNTLOOP_TIMEZONE
+```
+
+For a local foreground scheduler (blocks until Ctrl-C): `huntloop scheduler start`.
+
+Check what the scheduler has been doing — every run's trigger, status, per-stage
+counts and cost, without opening the database:
+
+```bash
+huntloop run history          # last 10 runs, newest first
+huntloop run history --json   # same fields, machine-readable
+```
+
+Configuration (`HUNTLOOP_RUN_AT`, `HUNTLOOP_TIMEZONE`, `HUNTLOOP_RUN_SPEND_CAP_USD`),
+catch-up after downtime, and troubleshooting are covered in
+[`docs/operations/scheduling.md`](docs/operations/scheduling.md).
