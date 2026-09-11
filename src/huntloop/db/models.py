@@ -165,6 +165,9 @@ class ProposalStatus(str, enum.Enum):
 class RunTrigger(str, enum.Enum):
     SCHEDULED = "scheduled"
     MANUAL = "manual"
+    # A run that was due while the process was down and fires once on restart
+    # (RUN-04). Distinguishable from SCHEDULED in run history by requirement.
+    CATCH_UP = "catch_up"
 
 
 class RunStatus(str, enum.Enum):
@@ -172,6 +175,13 @@ class RunStatus(str, enum.Enum):
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"
+    # RUN-03: a scheduled fire that did not start because a previous run was
+    # still in progress. A first-class queryable fact, not a log line.
+    SKIPPED = "skipped"
+    # RUN-08: scoring stopped mid-run because the configured USD spend cap was
+    # reached. Deliberately NOT reused as SUCCESS/PARTIAL + error_summary — a
+    # guardrail firing is not the same fact as something going wrong.
+    CAPPED = "capped"
 
 
 class StatusEventSource(str, enum.Enum):
