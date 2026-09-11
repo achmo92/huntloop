@@ -1,4 +1,5 @@
 import sys
+from dataclasses import replace
 from huntloop.cli.main import EXIT_OK, EXIT_PARTIAL, EXIT_ABORTED
 from huntloop.cli.render import render_run_human, render_run_json
 from huntloop.db.base import get_engine, make_session_factory
@@ -19,8 +20,10 @@ def cmd_run(args) -> int:
             concurrency=args.concurrency,
         )
         if summary.top_listings and args.limit:
-            summary.top_listings = summary.top_listings[:args.limit]
-            
+            # RunSummary is frozen -- replace, never mutate (found live at the
+            # 02-12 checkpoint: --limit defaults to 10, so every run crashed).
+            summary = replace(summary, top_listings=tuple(summary.top_listings[:args.limit]))
+
         print(render_run_json(summary) if args.json else render_run_human(summary))
         return EXIT_PARTIAL if summary.errors else EXIT_OK
     except Exception as e:

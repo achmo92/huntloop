@@ -31,6 +31,8 @@ Rules:
 - The `url` for a posting must be a URL that appears in the provided text. If no per-posting URL
   appears, return null and do not construct one.
 - If the text contains no job postings, return an empty list. Do not invent a posting.
+- If more than 50 postings are listed, extract at most the first 50 in page order. A truncated
+  response is a total failure; a bounded list is a partial success.
 
 Return JSON: {"listings": [{"title": str, "url": str|null, "location": str|null, "description": str|null, "posted": str|null, "compensation": str|null}]}"""
 
@@ -74,7 +76,10 @@ def extract_listings(client, crawl_result: CrawlResult, *, model: str | None = N
                 user=page.text[:MAX_EXTRACTION_TEXT_CHARS],
                 schema=ExtractionResponse,
                 temperature=0.0,
-                max_tokens=2000,
+                # 50 bounded listings fit comfortably; 2000 (the old cap)
+                # truncated mid-JSON on large boards and failed the WHOLE
+                # page's extraction (02-12 checkpoint, Atlassian's 230-job grid).
+                max_tokens=8000,
             )
             response = ExtractionResponse.model_validate(call.content)
             

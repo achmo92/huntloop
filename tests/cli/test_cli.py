@@ -222,6 +222,30 @@ class TestRunCommand:
         assert main(["run"]) == EXIT_PARTIAL
         out, _ = capsys.readouterr()
         assert "[Test] fetch: boom" in out
+
+    def test_run_limit_with_frozen_summary(self, capsys, monkeypatch):
+        """--limit must not crash on the FROZEN RunSummary (found live at the
+        02-12 checkpoint: --limit defaults to 10, so every run aborted with
+        "cannot assign to field 'top_listings'")."""
+        from huntloop.graph.build import RunSummary
+
+        summary = RunSummary(
+            run_id="test-run",
+            companies_checked=1, listings_fetched=2, after_dedup=2,
+            after_deterministic=2, after_triage=2, scored=2,
+            new_jobs_written=2, updated=0, failed=0,
+            tokens_in=10, tokens_out=20, cost_usd=None,
+            errors=(), status="success",
+            top_listings=(
+                {"title": "A", "url": "https://x/1", "score": 4.5, "company_name": "Co"},
+                {"title": "B", "url": "https://x/2", "score": 3.5, "company_name": "Co"},
+            ),
+        )
+        monkeypatch.setattr("huntloop.cli.run.run_discovery", lambda *a, **k: summary)
+        assert main(["run", "--limit", "1"]) == EXIT_OK
+        out, _ = capsys.readouterr()
+        assert "A" in out
+        assert "B" not in out
         
     def test_run_aborted(self, capsys, monkeypatch):
         def _mock(*args, **kwargs):
