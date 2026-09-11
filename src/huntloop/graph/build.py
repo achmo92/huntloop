@@ -34,6 +34,7 @@ from huntloop.graph.nodes import (
     process_employer,
     run_status,
 )
+from huntloop.scoring.spend_cap import SpendTracker
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import sessionmaker
@@ -123,7 +124,10 @@ def build_graph(
         retry_policy=RetryPolicy(max_attempts=3),
     )
 
-    builder.add_node("finalize_run", partial(finalize_run, sessionmaker=sessionmaker))
+    builder.add_node(
+        "finalize_run",
+        partial(finalize_run, sessionmaker=sessionmaker, spend_tracker=spend_tracker),
+    )
 
     builder.add_edge(START, "load_employers")
     builder.add_conditional_edges(
@@ -156,6 +160,11 @@ def run_discovery(
     from huntloop.llm.client import get_llm_client
 
     now = now or datetime.now(timezone.utc)
+
+    cfg = load_config()
+    # Always construct a tracker, even with no cap: it is the run's cost ledger
+    # first and its brake second. cap_usd=None means "measure, never stop".
+    spend_tracker = SpendTracker(cap_usd=cfg.run_spend_cap_usd)
 
     # 1. Active criteria must exist BEFORE a Run row is created: a run with
     #    nothing to score against should not have started.
@@ -211,6 +220,7 @@ def run_discovery(
             static_fetcher=static_fetcher,
             rendered_fetcher=rendered_fetcher,
             now=now,
+            spend_tracker=spend_tracker,
         )
 
         initial_state: DiscoveryState = {
@@ -223,7 +233,7 @@ def run_discovery(
 
         final = graph.invoke(
             initial_state,
-            config={"max_concurrency": concurrency or load_config().max_employer_concurrency},
+            config={"max_concurrency": concurrency or cfg.max_employer_concurrency},
         )
 
         results = final.get("employer_results", [])
@@ -240,9 +250,9 @@ def run_discovery(
             new_jobs_written=sum(r.get("written", 0) for r in results),
             updated=sum(r.get("updated", 0) for r in results),
             failed=sum(r.get("failed", 0) for r in results),
-            tokens_in=sum(r.get("tokens_in", 0) for r in results),
-            tokens_out=sum(r.get("tokens_out", 0) for r in results),
-            cost_usd=None,  # Phase 2 has no pricing model; tokens are the auditable unit
+            tokens_in=spend_tracker.tokens_in,
+            tokens_out=spend_tracker.tokens_out,
+            cost_usd=spend_tracker.spent_usd,
             errors=tuple(
                 {
                     "company": r.get("company_name", "Unknown"),
@@ -259,6 +269,8 @@ def run_discovery(
 
     except Exception as exc:
         # 6. A crashed run must not leave a row stuck in 'running' forever.
+        # The tracker's values are used here too: a run that crashed after
+        # spending money still spent it.
         session = sessionmaker()
         try:
             RunRepository(session).finish(
@@ -271,9 +283,9 @@ def run_discovery(
                 after_triage=0,
                 scored=0,
                 new_jobs_written=0,
-                tokens_in=0,
-                tokens_out=0,
-                cost_usd=0,
+                tokens_in=spend_tracker.tokens_in,
+                tokens_out=spend_tracker.tokens_out,
+                cost_usd=spend_tracker.spent_usd,
                 error_summary=f"run aborted: {type(exc).__name__}: {exc}",
             )
             session.commit()

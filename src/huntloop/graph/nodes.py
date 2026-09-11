@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 
 from langgraph.types import Send
 from sqlalchemy.orm import Session, sessionmaker
@@ -78,15 +79,20 @@ def fan_out_to_employers(state) -> list[Send]:
 def run_status(results: list[EmployerResult]) -> RunStatus:
     """Derive the run's terminal status from its per-employer results.
 
-    All employers errored -> FAILED. Some -> PARTIAL. None -> SUCCESS.
-    A run with zero employers is a clean SUCCESS, not an error (DISC-03 truth:
-    'a run with zero enabled employers finishes cleanly rather than erroring').
+    All employers errored -> FAILED. Some -> PARTIAL. Any capped (no errors)
+    -> CAPPED. Otherwise SUCCESS. A run with zero employers is a clean
+    SUCCESS, not an error (DISC-03 truth: 'a run with zero enabled employers
+    finishes cleanly rather than erroring').
     """
     errors = [r for r in results if r.get("error")]
     if results and len(errors) == len(results):
         return RunStatus.FAILED
     if errors:
         return RunStatus.PARTIAL
+    if any(r.get("capped") for r in results):
+        # Checked AFTER errors: a genuine failure is more actionable than a
+        # budget stop, and PARTIAL already tells the user to look at the run.
+        return RunStatus.CAPPED
     return RunStatus.SUCCESS
 
 
@@ -180,7 +186,7 @@ def process_employer(
     return {"employer_results": [result]}
 
 
-def finalize_run(state, *, sessionmaker: sessionmaker) -> dict:
+def finalize_run(state, *, sessionmaker: sessionmaker, spend_tracker=None) -> dict:
     """Aggregate all employer results, finish the Run row with terminal status."""
     session: Session = sessionmaker()
     try:
@@ -200,19 +206,41 @@ def finalize_run(state, *, sessionmaker: sessionmaker) -> dict:
             "tokens_out": sum(r.get("tokens_out", 0) for r in results),
         }
 
+        if spend_tracker is not None:
+            # The tracker is the authority, not the per-employer sums: it records
+            # each call's usage the instant that call returns, including the triage
+            # call of a listing whose dimension call was then cap-blocked and whose
+            # ScoredListing therefore never reached employer_results.
+            totals["tokens_in"] = spend_tracker.tokens_in
+            totals["tokens_out"] = spend_tracker.tokens_out
+            cost_usd = spend_tracker.spent_usd
+        else:
+            cost_usd = Decimal("0")
+
         errored = [r for r in results if r.get("error")]
-        error_summary = None
+        notes = []
         if errored:
-            error_summary = "\n".join(
+            notes.append("\n".join(
                 f"{r.get('company_name', 'Unknown')}@{r.get('stage')}: {r.get('error')}"
                 for r in errored
-            )
+            ))
+        if spend_tracker is not None:
+            if any(r.get("capped") for r in results):
+                notes.append(spend_tracker.reason())   # contains "spend cap"
+            if spend_tracker.unpriced_models:
+                # RUN-07 honesty: a $0.00 cost that is actually "we had no price
+                # for this model" must not look like a free run.
+                notes.append(
+                    "cost is a lower bound: no price table entry for "
+                    + ", ".join(sorted(spend_tracker.unpriced_models))
+                )
+        error_summary = "\n".join(notes) if notes else None
 
         repo = RunRepository(session)
         repo.finish(
             uuid.UUID(state["run_id"]),
             status=run_status(results),
-            cost_usd=0,  # Phase 2 has no pricing model; tokens are the auditable unit
+            cost_usd=cost_usd,
             error_summary=error_summary,
             **totals,
         )
