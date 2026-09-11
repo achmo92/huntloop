@@ -8,7 +8,7 @@ EXIT_ABORTED = 2     # the run could not complete at all
 
 from huntloop.cli.company import cmd_add, cmd_import, cmd_resolve, cmd_list
 from huntloop.cli.criteria import cmd_load
-from huntloop.cli.run import cmd_run
+from huntloop.cli.run import cmd_run, cmd_run_history
 from huntloop.cli.jobs import cmd_jobs_list
 from huntloop.config import ConfigError
 from huntloop.graph.build import NoActiveCriteria
@@ -65,6 +65,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser_run.add_argument("--concurrency", type=int, help="Max employer concurrency")
     parser_run.add_argument("--limit", type=int, default=10, help="Max top listings to show")
     parser_run.set_defaults(func=cmd_run)
+
+    # `huntloop run history` -- a non-required sub-subparser, so bare `huntloop run`
+    # keeps dispatching to cmd_run via the set_defaults above. Marking this
+    # required=True would break every existing `huntloop run` invocation.
+    run_sub = parser_run.add_subparsers(dest="run_command")
+    parser_run_history = run_sub.add_parser("history", help="Show recent runs")
+    parser_run_history.add_argument(
+        "--limit", type=int, default=10, help="How many runs to show (default 10)"
+    )
+    parser_run_history.add_argument("--json", action="store_true", help="Output JSON")
+    parser_run_history.set_defaults(func=cmd_run_history)
     
     # jobs
     parser_jobs = subparsers.add_parser("jobs", help="Manage jobs")
