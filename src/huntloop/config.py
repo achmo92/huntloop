@@ -9,7 +9,10 @@ failure the first time a credential is read.
 from __future__ import annotations
 
 import os
+import re
+import zoneinfo
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import dotenv
@@ -32,6 +35,9 @@ class Config:
     extraction_model: str
     max_employer_concurrency: int
     stale_after_empty_runs: int
+    run_at: str
+    timezone: str
+    run_spend_cap_usd: Decimal | None
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -44,6 +50,61 @@ def _positive_int_env(name: str, default: int) -> int:
         raise ConfigError(f"{name} must be an integer. Got: {raw!r}") from exc
     if value < 1:
         raise ConfigError(f"{name} must be >= 1. Got: {value}")
+    return value
+
+
+_RUN_AT_PATTERN = re.compile(r"^(\d{1,2}):(\d{2})$")
+
+
+def parse_run_at(value: str) -> tuple[int, int]:
+    """Parse a HUNTLOOP_RUN_AT value into (hour, minute).
+
+    Exposed (not private) because huntloop.scheduler.build needs the exact same
+    parse to construct its CronTrigger; two parsers would drift.
+    """
+    match = _RUN_AT_PATTERN.match(value.strip())
+    if match is None:
+        raise ConfigError(
+            "HUNTLOOP_RUN_AT must be a 24-hour HH:MM wall-clock time interpreted "
+            f"in HUNTLOOP_TIMEZONE (e.g. 08:00). Got: {value!r}"
+        )
+    hour, minute = int(match.group(1)), int(match.group(2))
+    if not (0 <= hour <= 23) or not (0 <= minute <= 59):
+        raise ConfigError(
+            "HUNTLOOP_RUN_AT must have hour 00-23 and minute 00-59. "
+            f"Got: {value!r}"
+        )
+    return hour, minute
+
+
+def _timezone_env(name: str, default: str) -> str:
+    raw = os.environ.get(name)
+    tz_name = default if raw is None or raw.strip() == "" else raw.strip()
+    try:
+        zoneinfo.ZoneInfo(tz_name)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError) as exc:
+        raise ConfigError(
+            f"{name} must be a valid IANA timezone name (e.g. America/New_York, "
+            f"Europe/London, UTC). Got: {tz_name!r} ({exc})"
+        ) from exc
+    return tz_name
+
+
+def _optional_positive_decimal_env(name: str) -> Decimal | None:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = Decimal(raw.strip())
+    except InvalidOperation as exc:
+        raise ConfigError(
+            f"{name} must be a decimal number of US dollars (e.g. 2.00). Got: {raw!r}"
+        ) from exc
+    if value <= 0:
+        raise ConfigError(
+            f"{name} must be greater than 0 — unset it entirely to run with no "
+            f"spend cap. Got: {value}"
+        )
     return value
 
 
@@ -118,6 +179,11 @@ def load_config() -> Config:
     max_employer_concurrency = _positive_int_env("HUNTLOOP_MAX_EMPLOYER_CONCURRENCY", 5)
     stale_after_empty_runs = _positive_int_env("HUNTLOOP_STALE_AFTER_EMPTY_RUNS", 3)
 
+    run_at = os.environ.get("HUNTLOOP_RUN_AT") or "08:00"
+    parse_run_at(run_at)  # fail fast at boot, not when the scheduler builds its trigger
+    timezone = _timezone_env("HUNTLOOP_TIMEZONE", "UTC")
+    run_spend_cap_usd = _optional_positive_decimal_env("HUNTLOOP_RUN_SPEND_CAP_USD")
+
     return Config(
         data_dir=data_dir,
         database_url=database_url,
@@ -129,6 +195,9 @@ def load_config() -> Config:
         extraction_model=extraction_model,
         max_employer_concurrency=max_employer_concurrency,
         stale_after_empty_runs=stale_after_empty_runs,
+        run_at=run_at,
+        timezone=timezone,
+        run_spend_cap_usd=run_spend_cap_usd,
     )
 
 
