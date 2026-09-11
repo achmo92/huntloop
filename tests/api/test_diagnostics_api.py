@@ -9,10 +9,10 @@ from datetime import UTC, datetime
 
 from huntloop.api.deps import get_llm
 from huntloop.api.routers import diagnostics
+from huntloop.config import load_config
 from huntloop.db.models import AtsPlatform, Company
 from huntloop.discovery.ats.base import FetchResult, FetchStatus, RawListing
 from huntloop.llm.client import LlmResponseError
-
 
 # ---------------------------------------------------------------------------
 # POST /api/diagnostics/database — both stores reachable
@@ -58,7 +58,8 @@ def test_llm_check_failure_names_endpoint_and_gives_remedy(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "fail"
-    assert "api.openai.com" in body["detail"]
+    # The failing detail names the endpoint actually configured (OPS-06).
+    assert load_config().openai_base_url in body["detail"]
     assert body["remedy"]
     assert "API access" in body["remedy"]
 

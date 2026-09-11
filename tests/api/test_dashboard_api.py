@@ -5,7 +5,7 @@ Consumes tests/api/conftest.py unedited. RED-phase note: nothing from
 unimplemented route fails at request time (404) with a real assertion failure.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from huntloop.db.models import Company, Job, JobStatus, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
