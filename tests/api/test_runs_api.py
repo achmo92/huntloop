@@ -11,10 +11,15 @@ assertion failure rather than a collection error.
 
 import threading
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from huntloop.cli.render import RUN_HISTORY_FIELDS
 from huntloop.db.models import Company, RunTrigger
 from huntloop.db.repository import RunRepository
+from huntloop.db.run_liveness import (
+    INTERRUPTED_RUN_REASON_PREFIX,
+    STOPPED_STALE_REASON,
+)
 
 _COUNTERS = {
     "companies_checked": 3,
@@ -257,3 +262,108 @@ def test_stop_unknown_run_is_404(client):
     resp = client.post(f"/api/runs/{uuid.uuid4()}/stop")
     assert resp.status_code == 404
     assert resp.json() == {"detail": "run not found"}
+
+
+# ---------------------------------------------------------------------------
+# GAP-15: stale-run reconciliation on read / trigger / stop
+# ---------------------------------------------------------------------------
+
+
+def _seed_running(session, *, started_at=None):
+    run = RunRepository(session).start(RunTrigger.MANUAL)
+    if started_at is not None:
+        run.started_at = started_at
+    session.commit()
+    return run.id
+
+
+def test_history_reconciles_a_stale_running_run(client, make_session):
+    """GET /api/runs finalizes existing orphans on the first page load (GAP-15)."""
+    from huntloop.db.models import Run, RunStatus
+
+    session = make_session()
+    try:
+        run_id = _seed_running(
+            session, started_at=datetime.now(UTC) - timedelta(hours=2)
+        )
+    finally:
+        session.close()
+
+    resp = client.get("/api/runs")
+    assert resp.status_code == 200
+    row = next(r for r in resp.json() if r["id"] == str(run_id))
+    assert row["status"] == "failed"
+    assert (row["error_summary"] or "").startswith(INTERRUPTED_RUN_REASON_PREFIX)
+
+    # The persisted row is terminal, not merely reshaped in the response.
+    session = make_session()
+    try:
+        persisted = session.get(Run, run_id)
+        assert persisted.status is RunStatus.FAILED
+        assert persisted.finished_at is not None
+    finally:
+        session.close()
+
+
+def test_trigger_after_only_stale_running_returns_202(client, make_session, monkeypatch):
+    """A dead run must never 409 the trigger (GAP-15.2/15.4)."""
+    from huntloop.api.routers import runs as runs_router
+    from huntloop.db.models import Run, RunStatus
+
+    session = make_session()
+    try:
+        run_id = _seed_running(
+            session, started_at=datetime.now(UTC) - timedelta(hours=2)
+        )
+    finally:
+        session.close()
+
+    done = threading.Event()
+
+    def _fake_run_discovery(*, sessionmaker, trigger):
+        done.set()
+        return object()
+
+    monkeypatch.setattr(runs_router, "run_discovery", _fake_run_discovery)
+
+    resp = client.post("/api/runs")
+    assert resp.status_code == 202
+    assert resp.json() == {"status": "accepted"}
+    assert done.wait(timeout=5.0), "background discovery never executed"
+
+    session = make_session()
+    try:
+        assert session.get(Run, run_id).status is RunStatus.FAILED
+    finally:
+        session.close()
+
+
+def test_stop_stale_run_returns_200_and_finalizes_stopped(client, make_session):
+    """A stale target is finalized now, not promised a marker (GAP-15.3)."""
+    from huntloop.db.models import Run, RunStatus
+    from huntloop.db.repository import SettingsRepository
+    from huntloop.graph.cancellation import STOP_REQUEST_SETTING_KEY
+
+    session = make_session()
+    try:
+        run_id = _seed_running(
+            session, started_at=datetime.now(UTC) - timedelta(hours=2)
+        )
+    finally:
+        session.close()
+
+    resp = client.post(f"/api/runs/{run_id}/stop")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "stopped"}
+
+    session = make_session()
+    try:
+        run = session.get(Run, run_id)
+        assert run.status is RunStatus.STOPPED
+        assert run.finished_at is not None
+        assert run.error_summary == STOPPED_STALE_REASON
+        # No cooperative marker is left behind pretending it will be honored.
+        assert SettingsRepository(session).get_value(STOP_REQUEST_SETTING_KEY) is None
+    finally:
+        session.close()
+

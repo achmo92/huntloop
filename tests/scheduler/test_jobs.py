@@ -15,6 +15,7 @@ from huntloop.config import load_config
 from huntloop.db.base import make_session_factory
 from huntloop.db.models import Run, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
+from huntloop.db.run_liveness import INTERRUPTED_RUN_REASON_PREFIX
 from huntloop.scheduler.jobs import (
     classify_trigger,
     execute_scheduled_run,
@@ -295,5 +296,51 @@ def test_run_status_capped_with_reason(main_engine, monkeypatch):
         assert run.cost_usd <= cap + per_listing
         # The cap must not disturb trigger classification.
         assert run.trigger is RunTrigger.SCHEDULED
+    finally:
+        session.close()
+
+
+def test_scheduler_reconciles_stale_run_and_proceeds(main_engine, monkeypatch):
+    """GAP-15: a dead RUNNING row is finalized so the fire is not skipped."""
+    from types import SimpleNamespace
+
+    import huntloop.graph.build as graph_build
+
+    factory = make_session_factory(main_engine)
+
+    session = factory()
+    try:
+        stale = RunRepository(session).start(RunTrigger.MANUAL)
+        stale.started_at = datetime(2026, 1, 1, tzinfo=UTC)
+        session.commit()
+        stale_id = stale.id
+    finally:
+        session.close()
+
+    calls = {"ran": False}
+
+    def _recording_run_discovery(*, sessionmaker, trigger, **kwargs):
+        calls["ran"] = True
+        return SimpleNamespace(
+            run_id="fake", status="success", new_jobs_written=0, cost_usd=0
+        )
+
+    monkeypatch.setattr(graph_build, "run_discovery", _recording_run_discovery)
+
+    cfg = make_cfg(run_at="08:00", timezone="UTC")
+    execute_scheduled_run(factory, cfg, now=datetime(2026, 9, 10, 8, 5, 0, tzinfo=UTC))
+
+    # The dead run did not block the fire: discovery actually ran.
+    assert calls["ran"] is True
+
+    session = factory()
+    try:
+        runs = session.execute(select(Run)).scalars().all()
+        assert all(r.status is not RunStatus.SKIPPED for r in runs)
+        reconciled = session.get(Run, stale_id)
+        assert reconciled.status is RunStatus.FAILED
+        assert (reconciled.error_summary or "").startswith(
+            INTERRUPTED_RUN_REASON_PREFIX
+        )
     finally:
         session.close()
