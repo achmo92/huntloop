@@ -66,9 +66,19 @@ function renderWithProviders(ui: ReactElement) {
   )
 }
 
-function mockSettings() {
+const AVAILABLE_MODELS = {
+  models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1"],
+  source: "provider" as const,
+}
+
+function mockSettings(modelsSource: "provider" | "fallback" = "provider") {
   mockedApi.mockImplementation(async (path) => {
     if (path === "/api/settings") return SETTINGS
+    if (path === "/api/settings/models") {
+      return modelsSource === "fallback"
+        ? { models: ["gpt-4o-mini"], source: "fallback" as const }
+        : AVAILABLE_MODELS
+    }
     throw new Error(`unexpected GET ${path}`)
   })
 }
@@ -183,6 +193,40 @@ describe("Settings", () => {
     expect(mockedApiPut).toHaveBeenCalledWith("/api/settings/spend-cap", {
       cap_usd: null,
     })
+  })
+
+  it("renders each stage's model as a dropdown and saves the picked id (GAP-5)", async () => {
+    const user = userEvent.setup()
+    mockSettings()
+    mockedApiPut.mockResolvedValue({
+      triage: "gpt-4.1",
+      scoring: "gpt-4o",
+      extraction: "gpt-4o",
+    })
+    renderWithProviders(<Settings />)
+
+    // The models section is dropdowns fed by the shared available-models query.
+    await user.click(
+      await screen.findByRole("combobox", { name: "Triage model" })
+    )
+    await user.click(await screen.findByRole("option", { name: "gpt-4.1" }))
+    await user.click(screen.getByRole("button", { name: "Save Models" }))
+
+    await waitFor(() =>
+      expect(mockedApiPut).toHaveBeenCalledWith("/api/settings/models", {
+        triage: "gpt-4.1",
+        scoring: "gpt-4o",
+        extraction: "gpt-4o",
+      })
+    )
+  })
+
+  it("shows the fallback hint when the provider list is unavailable (GAP-5)", async () => {
+    mockSettings("fallback")
+    renderWithProviders(<Settings />)
+
+    const hints = await screen.findAllByText(/Couldn't reach your provider/)
+    expect(hints.length).toBeGreaterThan(0)
   })
 })
 
