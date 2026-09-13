@@ -41,8 +41,12 @@ export default function Runs() {
     queryKey: ["runs"],
     queryFn: () => api<RunOut[]>("/api/runs?limit=50"),
     refetchInterval: (query) => {
-      const newest = query.state.data?.[0]
-      return newest?.status === "running" || watching ? 3000 : false
+      // GAP-16: poll while ANY row is running (not only the newest) so a stopped
+      // row reaches STOPPED without a manual refresh.
+      const hasRunningRow = query.state.data?.some(
+        (run) => run.status === "running"
+      )
+      return hasRunningRow || watching ? 3000 : false
     },
   })
 
