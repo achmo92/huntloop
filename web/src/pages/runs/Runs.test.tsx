@@ -101,6 +101,22 @@ const STOPPED_DETAIL: RunDetailData = {
   errors: [],
 }
 
+const FAILED_INTERRUPTED: RunOut = {
+  ...SUCCESS,
+  id: "run-interrupted",
+  status: "failed",
+  finished_at: "2026-09-11T08:02:00Z",
+  new_jobs_written: 0,
+  error_summary:
+    "run interrupted: the process ended before the run completed (last seen 2026-09-11T01:35:13+00:00)",
+}
+
+const FAILED_INTERRUPTED_DETAIL: RunDetailData = {
+  ...FAILED_INTERRUPTED,
+  after_dedup: 0,
+  errors: [],
+}
+
 function renderWithProviders(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -241,5 +257,44 @@ describe("Runs", () => {
     expect(
       within(dialog).queryByRole("button", { name: /stop/i })
     ).not.toBeInTheDocument()
+  })
+
+  it("states that stopping is cooperative while a run is in progress (GAP-15)", async () => {
+    mockApi([RUNNING, SUCCESS])
+    renderWithProviders(<Runs />)
+
+    await screen.findByText("Running")
+    expect(screen.getByText(/cooperative/i)).toBeInTheDocument()
+    // The caption is informational — it does not open the detail sheet.
+    expect(screen.queryByText("Run detail")).not.toBeInTheDocument()
+  })
+
+  it("explains cooperative stopping on the Stop control (GAP-15)", async () => {
+    mockApi([RUNNING])
+    renderWithProviders(<Runs />)
+
+    await screen.findByText("Running")
+    const stop = screen.getByRole("button", { name: "Stop" })
+    expect(stop).toHaveAttribute("title", /cooperative/i)
+  })
+
+  it("renders a reconciled interrupted run as an error fact with its reason (GAP-15)", async () => {
+    const user = userEvent.setup()
+    mockApi([FAILED_INTERRUPTED], FAILED_INTERRUPTED_DETAIL)
+    renderWithProviders(<Runs />)
+
+    expect(await screen.findByText("Failed")).toBeInTheDocument()
+    const badge = screen.getByTestId("run-status-failed")
+    expect(badge).toHaveAttribute("data-tone", "error")
+    // A terminal run offers no Stop control.
+    expect(
+      screen.queryByRole("button", { name: "Stop" })
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getAllByRole("row")[1])
+    const dialog = await screen.findByRole("dialog")
+    expect(
+      within(dialog).getByText(/run interrupted: the process ended before the run completed/)
+    ).toBeInTheDocument()
   })
 })
