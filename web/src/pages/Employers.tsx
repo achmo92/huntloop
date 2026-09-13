@@ -4,6 +4,7 @@ import { api } from "@/lib/api"
 import { EmptyState } from "@/components/EmptyState"
 import { CoverageCard } from "@/pages/criteria/CoverageCard"
 import type { CompanyOut } from "@/pages/criteria/types"
+import { AddEmployerDialog } from "./employers/AddEmployerDialog"
 import { RegistryTable } from "./employers/RegistryTable"
 
 /**
@@ -24,14 +25,17 @@ export default function Employers() {
 
   return (
     <div className="grid gap-6">
-      <header>
-        <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
-          Employers
-        </h1>
-        <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
-          The employers we watch — and how much of your target we can honestly
-          cover automatically.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
+            Employers
+          </h1>
+          <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
+            The employers we watch — and how much of your target we can honestly
+            cover automatically.
+          </p>
+        </div>
+        <AddEmployerDialog />
       </header>
 
       {companiesQuery.isLoading ? (
