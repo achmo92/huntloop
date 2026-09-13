@@ -1,10 +1,10 @@
 import type { ReactElement } from "react"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { api } from "@/lib/api"
+import { api, apiPost } from "@/lib/api"
 import Runs from "../Runs"
 import type { RunDetail as RunDetailData, RunOut } from "./types"
 
@@ -73,6 +73,34 @@ const DETAIL: RunDetailData = {
   ],
 }
 
+const RUNNING: RunOut = {
+  ...SUCCESS,
+  id: "run-running",
+  status: "running",
+  finished_at: null,
+  new_jobs_written: 0,
+}
+
+const RUNNING_DETAIL: RunDetailData = {
+  ...RUNNING,
+  after_dedup: 4,
+  errors: [],
+}
+
+const STOPPED: RunOut = {
+  ...SUCCESS,
+  id: "run-stopped",
+  status: "stopped",
+  new_jobs_written: 2,
+  error_summary: "stopped by user request",
+}
+
+const STOPPED_DETAIL: RunDetailData = {
+  ...STOPPED,
+  after_dedup: 12,
+  errors: [],
+}
+
 function renderWithProviders(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -95,6 +123,7 @@ function mockApi(runs: RunOut[], detail?: RunDetailData) {
 describe("Runs", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(apiPost).mockReset()
   })
 
   it("renders the history with per-stage counts and non-error guardrail badges (RUN-09)", async () => {
@@ -143,5 +172,74 @@ describe("Runs", () => {
 
     expect(await screen.findByText("No runs yet")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Run now" })).toBeInTheDocument()
+  })
+
+  it("renders a Stop control only for an in-progress row (GAP-4)", async () => {
+    mockApi([RUNNING, SUCCESS])
+    renderWithProviders(<Runs />)
+
+    // The running row offers Stop; the finished row must not.
+    expect(await screen.findByText("Running")).toBeInTheDocument()
+    expect(screen.getByText("Success")).toBeInTheDocument()
+    expect(screen.getAllByRole("button", { name: "Stop" })).toHaveLength(1)
+  })
+
+  it("posts to the stop endpoint and disables while the stop is honored (GAP-4)", async () => {
+    const user = userEvent.setup()
+    mockApi([RUNNING])
+    let resolvePost!: (value: unknown) => void
+    vi.mocked(apiPost).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePost = resolve
+        })
+    )
+    renderWithProviders(<Runs />)
+
+    await screen.findByText("Running")
+    await user.click(screen.getByRole("button", { name: "Stop" }))
+
+    expect(apiPost).toHaveBeenCalledWith("/api/runs/run-running/stop", {})
+    const pending = screen.getByRole("button", { name: /stopping/i })
+    expect(pending).toBeDisabled()
+    // Clicking Stop must not also open the detail sheet.
+    expect(screen.queryByText("Run detail")).not.toBeInTheDocument()
+
+    resolvePost({ status: "stop requested" })
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument()
+    )
+  })
+
+  it("offers Stop in the run detail only while the run is running (GAP-4)", async () => {
+    const user = userEvent.setup()
+    mockApi([RUNNING], RUNNING_DETAIL)
+    renderWithProviders(<Runs />)
+
+    await screen.findByText("Running")
+    await user.click(screen.getAllByRole("row")[1])
+
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByRole("button", { name: "Stop" })).toBeInTheDocument()
+  })
+
+  it("shows a stopped run as an attention-tone fact with the stop reason (GAP-4)", async () => {
+    const user = userEvent.setup()
+    mockApi([STOPPED], STOPPED_DETAIL)
+    renderWithProviders(<Runs />)
+
+    // Human intervention is a fact, not a failure — amber, never destructive.
+    expect(await screen.findByText("Stopped")).toBeInTheDocument()
+    const badge = screen.getByTestId("run-status-stopped")
+    expect(badge).toHaveAttribute("data-tone", "attention")
+    expect(badge.className).not.toContain("bg-destructive")
+
+    await user.click(screen.getAllByRole("row")[1])
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByText("stopped by user request")).toBeInTheDocument()
+    // A terminal run offers no Stop control in the detail.
+    expect(
+      within(dialog).queryByRole("button", { name: /stop/i })
+    ).not.toBeInTheDocument()
   })
 })
