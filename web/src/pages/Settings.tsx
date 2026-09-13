@@ -4,6 +4,7 @@ import { api, apiPut } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DiagnosticsPanel } from "./settings/DiagnosticsPanel"
+import { ModelSelect } from "./settings/ModelSelect"
 import { SettingsSection } from "./settings/SettingsSection"
 
 /**
@@ -28,6 +29,10 @@ interface Schedule {
 }
 interface SpendCap {
   cap_usd: number | null
+}
+interface AvailableModels {
+  models: string[]
+  source: "provider" | "fallback"
 }
 interface SettingsResponse {
   api_access: ApiAccess
@@ -74,6 +79,15 @@ export default function Settings() {
     queryFn: () => api<SettingsResponse>("/api/settings"),
   })
   const settings = settingsQuery.data
+
+  // GAP-5: one request feeds all three model pickers; the backend proxies the
+  // provider's list with the stored key (never exposed to the browser).
+  const modelsQuery = useQuery({
+    queryKey: ["available-models"],
+    queryFn: () => api<AvailableModels>("/api/settings/models"),
+  })
+  const availableModels = modelsQuery.data?.models ?? []
+  const modelsFromFallback = modelsQuery.data?.source === "fallback"
 
   const apiAccessDefaults = useMemo<ApiAccessForm>(
     () => ({ base_url: settings?.api_access.base_url ?? "", api_key: "" }),
@@ -227,15 +241,42 @@ export default function Settings() {
           <>
             <div className="grid gap-1.5">
               <FieldLabel htmlFor="model-triage">Triage</FieldLabel>
-              <Input id="model-triage" {...form.register("triage")} />
+              <ModelSelect
+                id="model-triage"
+                label="Triage model"
+                value={form.watch("triage")}
+                onChange={(value) =>
+                  form.setValue("triage", value, { shouldDirty: true })
+                }
+                models={availableModels}
+                fallback={modelsFromFallback}
+              />
             </div>
             <div className="grid gap-1.5">
               <FieldLabel htmlFor="model-scoring">Scoring</FieldLabel>
-              <Input id="model-scoring" {...form.register("scoring")} />
+              <ModelSelect
+                id="model-scoring"
+                label="Scoring model"
+                value={form.watch("scoring")}
+                onChange={(value) =>
+                  form.setValue("scoring", value, { shouldDirty: true })
+                }
+                models={availableModels}
+                fallback={modelsFromFallback}
+              />
             </div>
             <div className="grid gap-1.5">
               <FieldLabel htmlFor="model-extraction">Extraction</FieldLabel>
-              <Input id="model-extraction" {...form.register("extraction")} />
+              <ModelSelect
+                id="model-extraction"
+                label="Extraction model"
+                value={form.watch("extraction")}
+                onChange={(value) =>
+                  form.setValue("extraction", value, { shouldDirty: true })
+                }
+                models={availableModels}
+                fallback={modelsFromFallback}
+              />
             </div>
           </>
         )}
