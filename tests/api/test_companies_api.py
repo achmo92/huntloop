@@ -4,10 +4,8 @@ Consumes tests/api/conftest.py unedited: `client` speaks HTTP against the app
 with both session dependencies overridden onto a tmp SQLite file, and
 `make_session` seeds rows directly over that same file.
 
-RED-phase note: these tests import nothing from `huntloop.api.routers.companies`
-at module scope, so a missing route fails at request time (404/405), not at
-collection time — the TDD RED evidence is a real assertion failure against the
-unimplemented contract.
+GAP-10 note: `RESOLUTION_FAILURE_MESSAGE` is imported from the router so the
+contract asserts the one named constant instead of duplicating the sentence.
 """
 
 import time
@@ -17,6 +15,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
+from huntloop.api.routers.companies import RESOLUTION_FAILURE_MESSAGE
 from huntloop.db.models import AtsPlatform, Company, Job
 from huntloop.registry.resolve import ResolutionResult, ResolutionStatus
 
@@ -91,7 +90,7 @@ def test_list_shows_resolved_and_needs_attention_with_detail(client, make_sessio
     assert by_name["Globex"]["resolved"] is False
     # D-07/GAP-10: the failure state surfaces a generic user-facing message; the
     # raw probe/candidate trail must never reach the wire.
-    assert by_name["Globex"]["resolution_detail"] is not None
+    assert by_name["Globex"]["resolution_detail"] == RESOLUTION_FAILURE_MESSAGE
     assert "tiers ran" not in resp.text
     assert "probes, all failed" not in resp.text
 

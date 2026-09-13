@@ -28,6 +28,14 @@ from huntloop.registry.staleness import is_possibly_stale, staleness_message
 
 router = APIRouter(prefix="/api/companies", tags=["companies"])
 
+# GAP-10: the persisted resolution trail (ats_config.resolution.reason) is
+# diagnostics-only. The API exposes one generic, user-facing sentence and never
+# the internal probe/candidate detail.
+RESOLUTION_FAILURE_MESSAGE = (
+    "We couldn't find a supported job board for this employer automatically. "
+    "You can retry, or add the board details."
+)
+
 
 # ---------------------------------------------------------------------------
 # Request / response models (colocated here — mirrors criteria.py's pattern)
@@ -96,9 +104,22 @@ def _resolution_block(company: Company) -> dict:
     return company.ats_config.get("resolution", {}) or {}
 
 
+def _resolution_detail(company: Company, *, resolved: bool) -> str | None:
+    """The generic failure sentence for an employer whose probe failed.
+
+    The raw ``ats_config.resolution.reason`` stays persisted for diagnostics and
+    is deliberately never returned. A never-probed employer has no resolution
+    block and therefore no message.
+    """
+    if resolved:
+        return None
+    if not _resolution_block(company):
+        return None
+    return RESOLUTION_FAILURE_MESSAGE
+
+
 def _company_to_out(company: Company) -> CompanyOut:
     resolved = company.resolved_at is not None
-    detail = _resolution_block(company).get("reason") or None
     return CompanyOut(
         id=company.id,
         name=company.name,
@@ -108,7 +129,7 @@ def _company_to_out(company: Company) -> CompanyOut:
         enabled=company.enabled,
         resolved=resolved,
         resolution_status="resolved" if resolved else "needs_attention",
-        resolution_detail=detail,
+        resolution_detail=_resolution_detail(company, resolved=resolved),
         possibly_stale=is_possibly_stale(company),
         staleness_message=staleness_message(company),
         last_job_count=company.last_job_count,
