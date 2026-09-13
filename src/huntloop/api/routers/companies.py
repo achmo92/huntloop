@@ -22,19 +22,25 @@ from sqlalchemy.orm import Session
 
 from huntloop.api.background import resolve_company_in_background, run_in_background
 from huntloop.api.deps import get_session
-from huntloop.db.models import Company
+from huntloop.db.models import AtsPlatform, Company
 from huntloop.db.repository import CompanyRepository
-from huntloop.registry.resolve import mark_resolving
+from huntloop.discovery.ats.registry import ADAPTERS
+from huntloop.registry.resolve import build_manual_resolution_config, mark_resolving
 from huntloop.registry.staleness import is_possibly_stale, staleness_message
 
 router = APIRouter(prefix="/api/companies", tags=["companies"])
+
+# GAP-14: a manually entered board must be on a platform the resolver can
+# actually watch. Reuse the resolver's own adapter set rather than duplicating
+# it, so the manual path and the automatic path can never disagree.
+SUPPORTED_MANUAL_PLATFORMS = tuple(sorted(ADAPTERS))
 
 # GAP-10: the persisted resolution trail (ats_config.resolution.reason) is
 # diagnostics-only. The API exposes one generic, user-facing sentence and never
 # the internal probe/candidate detail.
 RESOLUTION_FAILURE_MESSAGE = (
     "We couldn't find a supported job board for this employer automatically. "
-    "You can retry, or add the board details."
+    "Retry, or set the job board manually."
 )
 
 
@@ -69,7 +75,17 @@ class CompanyCreate(BaseModel):
 
 
 class CompanyPatch(BaseModel):
-    enabled: bool
+    """An in-place partial update: the enabled toggle and/or manual board entry.
+
+    Every field is optional so the enabled toggle keeps working unchanged and a
+    board can be set independently (D-14a). ``patch_company`` rejects an empty
+    body (nothing to update) with 422.
+    """
+
+    enabled: bool | None = None
+    ats: str | None = None
+    ats_identifier: str | None = None
+    careers_url: str | None = None
 
 
 class BatchCreate(BaseModel):
@@ -280,11 +296,51 @@ def patch_company(
     body: CompanyPatch,
     session: Session = Depends(get_session),
 ) -> CompanyOut:
-    """Toggle ``enabled`` in place. History is never touched — rows are never removed."""
+    """Toggle ``enabled`` and/or set a job board by hand (GAP-14).
+
+    History is never touched — rows are never removed. Setting a supported
+    platform + board id records the resolution as ``manual`` and sets
+    ``resolved_at`` so the employer becomes watchable/Resolved immediately;
+    an unsupported platform or a missing identifier is a 422 with a human
+    sentence. A careers URL on its own just updates the URL.
+    """
     company = session.get(Company, company_id)
     if company is None:
         raise HTTPException(status_code=404, detail=f"company {company_id} not found")
-    company.enabled = body.enabled
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=422, detail="Provide at least one field to update.")
+    if "enabled" in data:
+        company.enabled = bool(data["enabled"])
+    board_requested = data.get("ats") is not None or data.get("ats_identifier") is not None
+    if board_requested:
+        platform = (data.get("ats") or "").strip()
+        identifier = (data.get("ats_identifier") or "").strip()
+        if not platform or not identifier:
+            raise HTTPException(
+                status_code=422,
+                detail="Choose a supported platform and enter its board id or slug.",
+            )
+        if platform not in SUPPORTED_MANUAL_PLATFORMS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unsupported platform '{platform}'. "
+                    f"Choose one of: {', '.join(SUPPORTED_MANUAL_PLATFORMS)}."
+                ),
+            )
+        company.ats = AtsPlatform(platform)
+        company.ats_identifier = identifier
+        if "careers_url" in data:
+            company.careers_url = (data["careers_url"] or "").strip() or None
+        company.ats_config = build_manual_resolution_config(
+            platform=platform,
+            identifier=identifier,
+            careers_url=company.careers_url,
+        )
+        company.resolved_at = datetime.now(UTC)
+    elif "careers_url" in data:
+        company.careers_url = (data["careers_url"] or "").strip() or None
     session.commit()
     return _company_to_out(company)
 

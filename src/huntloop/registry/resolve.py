@@ -383,6 +383,30 @@ def build_ats_config(result: ResolutionResult) -> dict:
     }
 
 
+def build_manual_resolution_config(
+    *, platform: str, identifier: str, careers_url: str | None
+) -> dict:
+    """A user-entered board: trusted, watchable, and recorded as manual (GAP-14).
+
+    Manual entry is trusted by-design (D-14c): the owner names the platform and
+    board slug, so the employer is immediately Resolved/watchable. No probe is
+    added — a board that later fails a real discovery fetch is surfaced by the
+    existing run health / staleness signals.
+    """
+    return {
+        "resolution": {
+            "state": RESOLVED,
+            "status": ResolutionStatus.RESOLVED.value,
+            "source": "manual",
+            "platform": platform,
+            "ats_identifier": identifier,
+            "careers_url": careers_url,
+            "finished_at": datetime.now(UTC).isoformat(),
+            "reason": "",
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # Persistence helper
 # ---------------------------------------------------------------------------
