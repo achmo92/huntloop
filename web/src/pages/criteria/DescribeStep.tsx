@@ -66,7 +66,7 @@ export function DescribeStep({ onSuggested }: DescribeStepProps) {
         }}
         rows={6}
         placeholder="e.g. I'm looking for a senior backend role, remote in the EU or UK, around €80k, no on-call-heavy startups…"
-        className="w-full rounded-xl border border-input bg-background px-3.5 py-3 text-sm leading-relaxed outline-none transition-colors placeholder:text-muted-foreground/70 hover:border-foreground/20 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="w-full rounded-xl border border-input bg-background px-3.5 py-3 text-sm leading-relaxed outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
       />
       {error ? (
         <p role="alert" className="text-sm text-destructive">

@@ -612,7 +612,7 @@ export function CriteriaForm({
                   {...field}
                   rows={3}
                   placeholder="Role, level, places, salary, what to avoid…"
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed outline-none transition-colors placeholder:text-muted-foreground/70 hover:border-foreground/20 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed outline-none transition-colors placeholder:text-muted-foreground hover:border-foreground/20 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 />
               </FormControl>
               <FormDescription>
