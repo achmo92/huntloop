@@ -278,6 +278,179 @@ def test_patch_unknown_id_404(client):
 
 
 # ---------------------------------------------------------------------------
+# PATCH /api/companies/{id} — manual board entry (GAP-14, UAT item 14)
+#
+# An employer automatic resolution cannot crack must not be permanently stuck:
+# a user types a supported platform + board slug (and an optional careers URL),
+# the resolution is recorded as manual, resolved_at is set, and the row leaves
+# the Error/Added state.
+# ---------------------------------------------------------------------------
+
+
+def test_patch_manual_board_marks_resolved_and_watchable(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(
+        f"/api/companies/{company_id}",
+        json={"ats": "greenhouse", "ats_identifier": "acme"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["resolution_state"] == "resolved"
+    assert body["resolved"] is True
+    assert body["ats"] == "greenhouse"
+    assert body["ats_identifier"] == "acme"
+
+    coverage = client.get("/api/companies/coverage").json()
+    assert coverage["resolved"] == 1
+    assert coverage["watchable"] == 1
+
+
+def test_patch_manual_board_records_manual_source(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(
+        f"/api/companies/{company_id}",
+        json={"ats": "greenhouse", "ats_identifier": "acme"},
+    )
+    assert resp.status_code == 200
+
+    session = make_session()
+    try:
+        company = session.get(Company, company_id)
+        block = company.ats_config["resolution"]
+        assert block["source"] == "manual"
+        assert block["state"] == "resolved"
+        assert block["ats_identifier"] == "acme"
+        assert company.resolved_at is not None
+    finally:
+        session.close()
+
+
+def test_patch_manual_board_with_careers_url(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(
+        f"/api/companies/{company_id}",
+        json={
+            "ats": "lever",
+            "ats_identifier": "acme",
+            "careers_url": "https://acme.test/careers",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["resolution_state"] == "resolved"
+    assert body["careers_url"] == "https://acme.test/careers"
+
+
+def test_patch_unsupported_platform_is_422(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(
+        f"/api/companies/{company_id}",
+        json={"ats": "workday", "ats_identifier": "acme"},
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "workday" in detail
+    for platform in ("ashby", "greenhouse", "lever"):
+        assert platform in detail
+
+    session = make_session()
+    try:
+        company = session.get(Company, company_id)
+        assert company.resolved_at is None
+        assert company.ats is None
+    finally:
+        session.close()
+
+
+def test_patch_board_without_identifier_is_422(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(f"/api/companies/{company_id}", json={"ats": "greenhouse"})
+    assert resp.status_code == 422
+
+
+def test_patch_empty_body_is_422(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(f"/api/companies/{company_id}", json={})
+    assert resp.status_code == 422
+
+
+def test_patch_careers_url_only_does_not_resolve(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(
+        f"/api/companies/{company_id}",
+        json={"careers_url": "https://acme.test/careers"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["careers_url"] == "https://acme.test/careers"
+    assert body["resolved"] is False
+    assert body["resolution_state"] == "added"
+
+
+def test_patch_enabled_only_still_works(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme", enabled=True)
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(f"/api/companies/{company_id}", json={"enabled": False})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
 # POST /api/companies/{id}/resolve — 202 + background state update (D-07)
 # ---------------------------------------------------------------------------
 
