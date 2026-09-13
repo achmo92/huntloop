@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Loader2Icon, PlusIcon } from "lucide-react"
-import { api, apiPost, ApiError } from "@/lib/api"
+import { apiPost, ApiError } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -16,18 +16,23 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import type { CompanyOut } from "@/pages/criteria/types"
+import {
+  RESOLUTION_QUEUE_KEY,
+  type ResolutionQueueVars,
+} from "@/pages/criteria/useResolutionQueue"
 
 /**
- * GAP-8/D-8a/D-8b: the Employers page can add an employer by hand. Adding is
- * add-and-resolve: POST /api/companies, immediately queue resolution with
- * POST /api/companies/{id}/resolve, then watch the shared ["companies"] cache
- * until the new row's status lands — or a bounded timeout releases the dialog.
- * A resolve failure still added the employer, so it must never block; the row
- * appears "Needs attention" with its own Retry.
+ * GAP-8/GAP-11: the Employers page can add an employer by hand. Adding is
+ * fire-and-close: POST /api/companies, queue resolution with
+ * POST /api/companies/{id}/resolve (202), invalidate the shared caches, and
+ * close immediately. Resolution continues in the background; the registry's
+ * existing conditional poll lands the new row with its true status.
+ *
+ * A failed create keeps the dialog open with an inline error. A failed resolve
+ * queue still leaves the employer added — the registry shows it "Needs
+ * attention" with its own Retry.
  */
-export const RESOLVE_TIMEOUT_MS = 30_000
-
-type Phase = "idle" | "saving" | "resolving"
+type Phase = "idle" | "saving"
 
 export function AddEmployerDialog() {
   const queryClient = useQueryClient()
@@ -36,15 +41,16 @@ export function AddEmployerDialog() {
   const [careersUrl, setCareersUrl] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>("idle")
-  const [pendingId, setPendingId] = useState<string | null>(null)
-  const [baselineCheckedAt, setBaselineCheckedAt] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  const companiesQuery = useQuery({
-    queryKey: ["companies"],
-    queryFn: () => api<CompanyOut[]>("/api/companies"),
-    enabled: pendingId !== null,
-    refetchInterval: pendingId ? 2000 : false,
+  const queue = useMutation({
+    mutationKey: RESOLUTION_QUEUE_KEY,
+    mutationFn: (vars: ResolutionQueueVars) =>
+      apiPost(`/api/companies/${vars.rows[0].id}/resolve`, {}),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["companies"] })
+      await queryClient.invalidateQueries({ queryKey: ["coverage"] })
+    },
   })
 
   useEffect(() => {
@@ -52,48 +58,6 @@ export function AddEmployerDialog() {
     const timer = setTimeout(() => setToast(null), 4000)
     return () => clearTimeout(timer)
   }, [toast])
-
-  // The probe is done once the row resolves or its last_checked_at changes
-  // (a repeated failure is still a completed probe — polling must terminate).
-  useEffect(() => {
-    if (!pendingId) return
-    const company = companiesQuery.data?.find(
-      (candidate) => candidate.id === pendingId
-    )
-    if (!company) return
-    if (company.resolved || company.last_checked_at !== baselineCheckedAt) {
-      const message = company.resolved
-        ? `Added ${company.name}.`
-        : `Added ${company.name} — we couldn't find their job board automatically.`
-      finish(message)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companiesQuery.data, pendingId, baselineCheckedAt])
-
-  // Bounded timeout: never leave the dialog waiting on a probe that may run long.
-  useEffect(() => {
-    if (!pendingId) return
-    const timer = setTimeout(() => {
-      finish(
-        `Added ${name.trim()} — still finding their job board; it'll update on the page.`
-      )
-    }, RESOLVE_TIMEOUT_MS)
-    return () => clearTimeout(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingId])
-
-  function finish(message: string) {
-    void queryClient.invalidateQueries({ queryKey: ["companies"] })
-    void queryClient.invalidateQueries({ queryKey: ["coverage"] })
-    setOpen(false)
-    setName("")
-    setCareersUrl("")
-    setError(null)
-    setPhase("idle")
-    setPendingId(null)
-    setBaselineCheckedAt(null)
-    setToast(message)
-  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -120,23 +84,19 @@ export function AddEmployerDialog() {
       return
     }
 
-    setPendingId(created.id)
-    setBaselineCheckedAt(created.last_checked_at)
-    setPhase("resolving")
-
-    try {
-      await apiPost(`/api/companies/${created.id}/resolve`, {})
-      await queryClient.invalidateQueries({ queryKey: ["companies"] })
-      await queryClient.invalidateQueries({ queryKey: ["coverage"] })
-    } catch (err) {
-      // The employer EXISTS — never block. It lands "Needs attention" with its
-      // own Retry; report why resolution didn't start.
-      finish(
-        err instanceof ApiError
-          ? err.detail
-          : "Added them, but couldn't start finding their job board."
-      )
-    }
+    // GAP-11: fire-and-close. Queue resolution (202), let the registry's
+    // existing conditional poll land the row, and close immediately.
+    queue.mutate({
+      rows: [{ id: created.id, last_checked_at: created.last_checked_at }],
+    })
+    await queryClient.invalidateQueries({ queryKey: ["companies"] })
+    await queryClient.invalidateQueries({ queryKey: ["coverage"] })
+    setOpen(false)
+    setName("")
+    setCareersUrl("")
+    setError(null)
+    setPhase("idle")
+    setToast(`Added ${created.name}.`)
   }
 
   const busy = phase !== "idle"
@@ -153,8 +113,8 @@ export function AddEmployerDialog() {
             <DialogHeader>
               <DialogTitle>Add employer</DialogTitle>
               <DialogDescription>
-                Add a company by name — we'll start finding their job board
-                automatically.
+                Add a company by name — we'll start finding their job board in
+                the background.
               </DialogDescription>
             </DialogHeader>
 
@@ -204,11 +164,7 @@ export function AddEmployerDialog() {
               </DialogClose>
               <Button type="submit" disabled={busy}>
                 {busy ? <Loader2Icon className="animate-spin" /> : null}
-                {phase === "saving"
-                  ? "Saving…"
-                  : phase === "resolving"
-                    ? "Finding their job board…"
-                    : "Add"}
+                {busy ? "Saving…" : "Add"}
               </Button>
             </DialogFooter>
           </form>

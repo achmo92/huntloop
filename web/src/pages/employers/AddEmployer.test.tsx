@@ -137,7 +137,7 @@ describe("Add employer dialog (GAP-8/GAP-11)", () => {
     await user.type(screen.getByLabelText("Name"), "Hooli")
     await user.click(screen.getByRole("button", { name: "Add" }))
 
-    expect(await screen.findByText("Hooli")).toBeInTheDocument()
+    expect(await screen.findAllByText("Hooli")).not.toHaveLength(0)
     const retry = await screen.findByRole("button", {
       name: "Retry resolution for Hooli",
     })
