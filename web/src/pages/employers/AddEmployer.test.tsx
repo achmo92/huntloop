@@ -38,7 +38,7 @@ const HOOLI_CREATED: CompanyOut = {
   careers_url: null,
   enabled: true,
   resolved: false,
-  resolution_status: "needs_attention",
+  resolution_state: "added",
   resolution_detail: null,
   possibly_stale: false,
   staleness_message: null,
@@ -109,7 +109,7 @@ describe("Add employer dialog (GAP-8/GAP-11)", () => {
     ).not.toBeInTheDocument()
   })
 
-  it("lands the new employer in the registry, reading Retrying… while it resolves", async () => {
+  it("lands the new employer in the registry, reading Resolving… while it resolves", async () => {
     const user = userEvent.setup()
     let listings: CompanyOut[] = []
     mockedApi.mockImplementation(async (path) => {
@@ -138,10 +138,9 @@ describe("Add employer dialog (GAP-8/GAP-11)", () => {
     await user.click(screen.getByRole("button", { name: "Add" }))
 
     expect(await screen.findAllByText("Hooli")).not.toHaveLength(0)
-    const retry = await screen.findByRole("button", {
-      name: "Retry resolution for Hooli",
-    })
-    expect(retry).toHaveTextContent("Retrying…")
+    // GAP-13: the row is `added` on the wire plus optimistically in flight
+    // while the queued trigger is pending, so it reads Resolving…
+    expect(await screen.findByText("Resolving…")).toBeInTheDocument()
   })
 
   it("blocks an empty name inline without calling the API", async () => {
