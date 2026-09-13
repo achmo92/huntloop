@@ -166,11 +166,18 @@ def crawl_careers(
     previous_hash: str | None = None,
     max_pages: int = DEFAULT_MAX_PAGES,
     rendered_fetcher=None,
+    should_stop=None,
 ) -> CrawlResult:
     """Crawl a careers site, starting at base_url.
 
     Respects same-origin bounds, depth bounds (max_pages), and short-circuits
     if the base page hash matches the previous_hash.
+
+    GAP-16: ``should_stop`` is called after the base fetch and at the top of
+    each detail-page iteration. Both calls sit OUTSIDE the broad
+    ``except Exception`` blocks below, so a raised cooperative stop (e.g.
+    :class:`~huntloop.graph.cancellation.RunStoppedByUser`) propagates instead
+    of being silently swallowed as a fetch failure.
     """
     # 1. Fetch base_url
     try:
@@ -180,6 +187,9 @@ def crawl_careers(
         
     if not result.ok:
         return CrawlResult(base_url, reason=f"fetch failed: {result.status_code or result.error}")
+
+    if should_stop is not None:
+        should_stop()
 
     html = result.html
     page_hash = content_hash(html)
@@ -241,6 +251,9 @@ def crawl_careers(
             break
         if _normalize(link) in visited:
             continue
+
+        if should_stop is not None:
+            should_stop()
 
         visited.add(_normalize(link))
         try:

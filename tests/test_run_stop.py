@@ -11,9 +11,8 @@ This file owns all six behavior contracts from 04-14-PLAN.md Task 1.
 
 from __future__ import annotations
 
-import threading
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 import sqlalchemy
@@ -376,29 +375,26 @@ class _ListingAdapter:
 
 
 class _StopOnScoreClient:
-    """Queues triage/scoring responses and seeds the stop marker on the first
-    scoring call — so the marker appears mid-batch, after a model call, exactly
-    where the finer GAP-16 checkpoints must observe it."""
+    """Queues triage/scoring responses and flips the stop flag on the first
+    scoring call — so the stop appears mid-batch, after a model call, exactly
+    where the finer GAP-16 checkpoints must observe it.
 
-    def __init__(self, sessionmaker, *, triage: list, scoring: list) -> None:
-        self.sessionmaker = sessionmaker
+    The flag is read through a monkeypatched ``nodes.is_stop_requested`` rather
+    than a persisted marker: SQLite admits a single writer, and
+    ``process_employer`` already holds a write transaction by scoring time
+    (``record_fetch_outcome`` flushes), so a second connection could not commit
+    a marker without deadlocking. The real Setting-marker read path is covered
+    by the helper contract tests and the cooperative-stop test above.
+    """
+
+    def __init__(self, *, triage: list, scoring: list) -> None:
         self._triage = list(triage)
         self._scoring = list(scoring)
         self.calls = 0
-        self._seeded = False
+        self.stop_requested = False
 
     def _seed_stop(self) -> None:
-        from huntloop.graph.cancellation import request_stop
-
-        self._seeded = True
-        session = self.sessionmaker()
-        try:
-            running = find_run_in_progress(session)
-            assert running is not None, "no RUNNING run to address the stop to"
-            request_stop(session, running.id)
-            session.commit()
-        finally:
-            session.close()
+        self.stop_requested = True
 
     class _Completions:
         def __init__(self, parent) -> None:
@@ -414,7 +410,7 @@ class _StopOnScoreClient:
             if "triaging job listings" in system:
                 payload = parent._triage.pop(0)
             elif "scoring job listings" in system:
-                if not parent._seeded:
+                if not parent.stop_requested:
                     parent._seed_stop()
                 payload = parent._scoring.pop(0)
             else:
@@ -465,7 +461,7 @@ def test_raise_if_stop_requested_or_finished_contracts(sessionmaker):
     # A terminal row raises even after the marker is cleared.
     session = sessionmaker()
     try:
-        clear_stop_request(session, run_id)
+        clear_stop_request(session)
         RunRepository(session).finish(
             run_id, status=RunStatus.STOPPED, **_counters()
         )
@@ -551,8 +547,11 @@ def test_pending_stop_blocks_write_batch(sessionmaker, monkeypatch):
     adapter = _ListingAdapter([make_listing("wg-1")])
     monkeypatch.setattr(nodes_mod, "get_adapter", lambda platform: adapter)
 
-    client = _StopOnScoreClient(
-        sessionmaker, triage=[TRIAGE_KEEP], scoring=[dims_response(4)]
+    client = _StopOnScoreClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+    monkeypatch.setattr(
+        nodes_mod,
+        "is_stop_requested",
+        lambda _sessionmaker, _run_id: client.stop_requested,
     )
 
     summary = run_discovery(
@@ -582,8 +581,11 @@ def test_stop_during_scoring_aborts_at_next_listing(sessionmaker, monkeypatch):
     adapter = _ListingAdapter([make_listing("pl-1"), make_listing("pl-2")])
     monkeypatch.setattr(nodes_mod, "get_adapter", lambda platform: adapter)
 
-    client = _StopOnScoreClient(
-        sessionmaker, triage=[TRIAGE_KEEP], scoring=[dims_response(4)]
+    client = _StopOnScoreClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+    monkeypatch.setattr(
+        nodes_mod,
+        "is_stop_requested",
+        lambda _sessionmaker, _run_id: client.stop_requested,
     )
 
     summary = run_discovery(

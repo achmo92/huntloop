@@ -328,21 +328,65 @@ class RunRepository:
         error_summary: str | None = None,
     ) -> Run:
         run = self.session.get(Run, run_id)
-        run.status = status
-        run.companies_checked = companies_checked
-        run.listings_fetched = listings_fetched
-        run.after_dedup = after_dedup
-        run.after_deterministic = after_deterministic
-        run.after_triage = after_triage
-        run.scored = scored
-        run.new_jobs_written = new_jobs_written
-        run.tokens_in = tokens_in
-        run.tokens_out = tokens_out
-        run.cost_usd = cost_usd
-        if error_summary is not None:
-            run.error_summary = error_summary
-        run.finished_at = datetime.now(UTC)
-        return run
+        return _apply_finish(
+            run,
+            status=status,
+            companies_checked=companies_checked,
+            listings_fetched=listings_fetched,
+            after_dedup=after_dedup,
+            after_deterministic=after_deterministic,
+            after_triage=after_triage,
+            scored=scored,
+            new_jobs_written=new_jobs_written,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost_usd,
+            error_summary=error_summary,
+        )
+
+    def finish_if_running(
+        self,
+        run_id: uuid.UUID,
+        *,
+        status: RunStatus,
+        companies_checked: int,
+        listings_fetched: int,
+        after_dedup: int,
+        after_deterministic: int,
+        after_triage: int,
+        scored: int,
+        new_jobs_written: int,
+        tokens_in: int,
+        tokens_out: int,
+        cost_usd: float,
+        error_summary: str | None = None,
+    ) -> Run | None:
+        """Apply the terminal fields only while the row is still RUNNING.
+
+        GAP-16 race safety: once a row is terminal — including a stop finalized
+        by the durable grace-window sweep — the run thread must never overwrite
+        it with its own late finish. Returns ``None`` and mutates nothing for a
+        terminal or absent row. ``finish`` stays unconditional for the callers
+        (record_skipped_run, the stale-run finalize) that need that.
+        """
+        run = self.session.get(Run, run_id)
+        if run is None or run.status is not RunStatus.RUNNING:
+            return None
+        return _apply_finish(
+            run,
+            status=status,
+            companies_checked=companies_checked,
+            listings_fetched=listings_fetched,
+            after_dedup=after_dedup,
+            after_deterministic=after_deterministic,
+            after_triage=after_triage,
+            scored=scored,
+            new_jobs_written=new_jobs_written,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost_usd,
+            error_summary=error_summary,
+        )
 
     def get(self, run_id: uuid.UUID) -> Run | None:
         return self.session.get(Run, run_id)
@@ -353,3 +397,41 @@ class RunRepository:
                 select(Run).order_by(Run.started_at.desc()).limit(limit)
             ).scalars()
         )
+
+
+def _apply_finish(
+    run: Run,
+    *,
+    status: RunStatus,
+    companies_checked: int,
+    listings_fetched: int,
+    after_dedup: int,
+    after_deterministic: int,
+    after_triage: int,
+    scored: int,
+    new_jobs_written: int,
+    tokens_in: int,
+    tokens_out: int,
+    cost_usd: float,
+    error_summary: str | None = None,
+) -> Run:
+    """The single field-setting body shared by finish()/finish_if_running().
+
+    Keeping one implementation means the conditional variant can never drift
+    from the unconditional one; only the RUNNING guard differs between them.
+    """
+    run.status = status
+    run.companies_checked = companies_checked
+    run.listings_fetched = listings_fetched
+    run.after_dedup = after_dedup
+    run.after_deterministic = after_deterministic
+    run.after_triage = after_triage
+    run.scored = scored
+    run.new_jobs_written = new_jobs_written
+    run.tokens_in = tokens_in
+    run.tokens_out = tokens_out
+    run.cost_usd = cost_usd
+    if error_summary is not None:
+        run.error_summary = error_summary
+    run.finished_at = datetime.now(UTC)
+    return run

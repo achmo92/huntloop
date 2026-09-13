@@ -108,6 +108,34 @@ def _raise_if_stop_requested(sessionmaker: sessionmaker, run_id: str) -> None:
         raise RunStoppedByUser()
 
 
+def _raise_if_finished(sessionmaker: sessionmaker, run_id: str) -> None:
+    """GAP-16 race safety: raise when the Run row is no longer RUNNING.
+
+    A grace-window stop (or any other terminal write) can finalize the row while
+    the run thread is still in flight. Checkpoints consult this so the thread
+    aborts instead of writing work into a run the user already ended.
+    """
+    session = sessionmaker()
+    try:
+        run = RunRepository(session).get(uuid.UUID(run_id))
+        if run is None or run.status is not RunStatus.RUNNING:
+            raise RunStoppedByUser("run is no longer running")
+    finally:
+        session.close()
+
+
+def _raise_if_stop_requested_or_finished(sessionmaker: sessionmaker, run_id: str) -> None:
+    """The full stop gate: a marker OR a terminal row aborts the thread.
+
+    Distinct from ``_raise_if_stop_requested`` (marker-only, GAP-4): a
+    grace-window finalize clears the marker as it terminates the row, so the
+    terminal check is what keeps a grace-finalized run un-writable even after
+    its marker is gone (D-16e).
+    """
+    _raise_if_finished(sessionmaker, run_id)
+    _raise_if_stop_requested(sessionmaker, run_id)
+
+
 def process_employer(
     state,
     *,
@@ -134,12 +162,18 @@ def process_employer(
         "company_id": state["company_id"], "failed": 0,
         "error": None, "stage": None,
     }
+
+    def should_stop() -> None:
+        # GAP-16: the full gate (marker OR terminal row). Used at every substage
+        # boundary below so a stop is honored at the next safe point inside this
+        # employer, never only at the next employer.
+        _raise_if_stop_requested_or_finished(sessionmaker, state["run_id"])
+
     stage = "load"
     try:
-        # GAP-4: between employers — a stop requested before this employer
+        # GAP-4/GAP-16: between employers — a stop requested before this employer
         # starts is honored before any work, including the Company lookup.
-        if is_stop_requested(sessionmaker, state["run_id"]):
-            raise RunStoppedByUser()
+        should_stop()
         company = session.get(Company, uuid.UUID(state["company_id"]))
         if company is None:
             raise LookupError(f"company {state['company_id']} not found")
@@ -149,13 +183,13 @@ def process_employer(
         fetch_result, path = _fetch_for_employer(
             company, session, llm_client=llm_client, http_client=http_client,
             static_fetcher=static_fetcher, rendered_fetcher=rendered_fetcher,
-            extraction_model=extraction_model,
+            extraction_model=extraction_model, should_stop=should_stop,
         )
         result["path"] = path
 
-        # GAP-4: between stages — a stop requested while fetching is honored
-        # before any scoring/writing work begins.
-        _raise_if_stop_requested(sessionmaker, state["run_id"])
+        # GAP-4/GAP-16: after fetch/extraction — a stop requested while fetching
+        # is honored before any scoring/writing work begins.
+        should_stop()
 
         # REG-05: the real FetchResult on every path -- the crawl path feeds it
         # through to_fetch_result so the empty-vs-error distinction is identical.
@@ -174,11 +208,16 @@ def process_employer(
             raise RuntimeError("no active criteria")
         _, criteria = criteria_data
 
+        # GAP-16: after dedup/criteria and immediately before the first model
+        # call, so a stop during a prior employer's scoring is honored here.
+        should_stop()
+
         stage = "score"
         scored_batch = _score_batch(
             listings, criteria, state, llm_client=llm_client, now=now,
             spend_tracker=spend_tracker,
             triage_model=triage_model, scoring_model=scoring_model,
+            stop_check=lambda: _raise_if_stop_requested(sessionmaker, state["run_id"]),
         )
         result["after_deterministic"] = scored_batch.after_deterministic
         result["after_triage"] = scored_batch.after_triage
@@ -188,6 +227,11 @@ def process_employer(
         result["failed"] += scored_batch.scoring_failed
         if scored_batch.capped:
             result["capped"] = True
+
+        # GAP-16: the full stop/terminal gate sits immediately before the jobs
+        # write — a run whose stop was requested (or was grace-finalized) must
+        # never write jobs after the stop.
+        should_stop()
 
         stage = "write"
         outcome = write_batch(
@@ -221,6 +265,10 @@ def finalize_run(state, *, sessionmaker: sessionmaker, spend_tracker=None) -> di
     """Aggregate all employer results, finish the Run row with terminal status."""
     session: Session = sessionmaker()
     try:
+        # GAP-16: a stop that arrives after the last employer must still escape
+        # to the STOPPED path rather than let finalize_run finish SUCCESS.
+        _raise_if_stop_requested_or_finished(sessionmaker, state["run_id"])
+
         results = state.get("employer_results", [])
 
         # Sum every counter across employer_results. Missing keys default to 0:
@@ -268,7 +316,9 @@ def finalize_run(state, *, sessionmaker: sessionmaker, spend_tracker=None) -> di
         error_summary = "\n".join(notes) if notes else None
 
         repo = RunRepository(session)
-        repo.finish(
+        # GAP-16: never overwrite a row a grace-window finalize already set
+        # terminal. finish_if_running is a no-op for a non-RUNNING row.
+        repo.finish_if_running(
             uuid.UUID(state["run_id"]),
             status=run_status(results),
             cost_usd=cost_usd,
@@ -284,11 +334,15 @@ def finalize_run(state, *, sessionmaker: sessionmaker, spend_tracker=None) -> di
 
 def _fetch_for_employer(
     company, session, *, llm_client, http_client, static_fetcher, rendered_fetcher,
-    extraction_model=None,
+    extraction_model=None, should_stop=None,
 ):
     """Fetch listings for an employer via its ATS adapter, else the crawl fallback.
 
     Returns (FetchResult, path) where path is "ats" | "crawl" | "skipped".
+
+    GAP-16: ``should_stop`` is threaded into the crawl so a stop is observed
+    between pages, and checked again immediately before extraction so a stop
+    seen during the crawl does not trigger a wasted model call.
     """
     # Resolved ATS employer: the cheap, structured, primary path.
     if company.ats and company.ats_identifier:
@@ -304,10 +358,16 @@ def _fetch_for_employer(
             static_fetcher, company.careers_url,
             previous_hash=load_crawl_hash(company),
             rendered_fetcher=rendered_fetcher,
+            should_stop=should_stop,
         )
         if crawl_result.skipped:
             # Unchanged page since last run: genuinely nothing new.
             return to_fetch_result([], crawl_result), "crawl"
+
+        # A stop observed during the crawl must not trigger a wasted extraction
+        # (LLM) call.
+        if should_stop is not None:
+            should_stop()
 
         if llm_client is None:
             # Extraction is an LLM call (DISC-05). Without a client there is no
@@ -352,7 +412,8 @@ def _dedupe_within_batch(company, listings):
 
 
 def _score_batch(listings, criteria, state, *, llm_client, now=None,
-                 spend_tracker=None, triage_model=None, scoring_model=None) -> _ScoreBatchOut:
+                 spend_tracker=None, triage_model=None, scoring_model=None,
+                 stop_check=None) -> _ScoreBatchOut:
     """Run every listing through the scoring pipeline (or filters-only mode).
 
     The per-stage survivor counts are computed here because their meaning
@@ -376,6 +437,10 @@ def _score_batch(listings, criteria, state, *, llm_client, now=None,
     capped = False
 
     for listing in listings:
+        # GAP-16: between scored listings, never mid model call. A stop that
+        # arrives during one listing's calls is honored before the next begins.
+        if stop_check is not None:
+            stop_check()
         if state.get("no_score"):
             s = _filters_only(listing, criteria, now=now)
             if not s.drop_reason:
