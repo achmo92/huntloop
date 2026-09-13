@@ -18,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import type { CompanyOut } from "@/pages/onboarding/types"
+import type { CompanyOut } from "@/pages/criteria/types"
 
 /**
  * D-07/D-08: the registry is ONE list. Resolution failure is a status column

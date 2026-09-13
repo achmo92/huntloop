@@ -218,13 +218,13 @@ describe("Dashboard", () => {
     expect(button).toBeDisabled()
   })
 
-  it("shows the onboarding empty state for a first-time user (D-18, UI-07)", async () => {
+  it("shows the first-time empty state for a new user (D-18, UI-07)", async () => {
     mockApi(EMPTY_DASHBOARD)
     renderWithProviders(<Dashboard />)
 
     expect(await screen.findByText("Welcome to HuntLoop")).toBeInTheDocument()
     expect(
-      screen.getByRole("button", { name: "Start onboarding" })
+      screen.getByRole("button", { name: "Describe your search" })
     ).toBeInTheDocument()
     expect(screen.queryByText("Last run")).not.toBeInTheDocument()
   })

@@ -6,8 +6,8 @@ import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { api, apiPost } from "@/lib/api"
 import Criteria from "../Criteria"
-import { CoverageCard } from "../onboarding/CoverageCard"
-import { EmployerProposalsStep } from "../onboarding/EmployerProposalsStep"
+import { CoverageCard } from "./CoverageCard"
+import { EmployerProposalsStep } from "./EmployerProposalsStep"
 import { HistoryView } from "./HistoryView"
 
 vi.mock("@/lib/api", () => {

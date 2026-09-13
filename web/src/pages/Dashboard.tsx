@@ -147,8 +147,8 @@ export default function Dashboard() {
         <EmptyState
           title="Welcome to HuntLoop"
           description="Describe what you're looking for and we'll start watching employers for you."
-          actionLabel="Start onboarding"
-          onAction={() => navigate("/onboarding")}
+          actionLabel="Describe your search"
+          onAction={() => navigate("/criteria")}
         />
       ) : (
         <>

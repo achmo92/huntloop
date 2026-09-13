@@ -2,14 +2,14 @@ import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { api } from "@/lib/api"
 import { EmptyState } from "@/components/EmptyState"
-import { CoverageCard } from "@/pages/onboarding/CoverageCard"
-import type { CompanyOut } from "@/pages/onboarding/types"
+import { CoverageCard } from "@/pages/criteria/CoverageCard"
+import type { CompanyOut } from "@/pages/criteria/types"
 import { RegistryTable } from "./employers/RegistryTable"
 
 /**
  * The employers surface: the honest coverage headline (D-06) stays visible
- * here after onboarding ends, above the one-list registry (D-07/D-08). Zero
- * employers is an empty state that points back at onboarding (D-18/UI-07),
+ * here after setup ends, above the one-list registry (D-07/D-08). Zero
+ * employers is an empty state that points back at criteria (D-18/UI-07),
  * never a blank table.
  */
 export default function Employers() {
@@ -39,9 +39,9 @@ export default function Employers() {
       ) : isEmpty ? (
         <EmptyState
           title="No employers yet"
-          description="Add employers during onboarding and we'll watch their job boards for you."
-          actionLabel="Start onboarding"
-          onAction={() => navigate("/onboarding")}
+          description="Add employers from your criteria and we'll watch their job boards for you."
+          actionLabel="Describe your search"
+          onAction={() => navigate("/criteria")}
         />
       ) : (
         <>

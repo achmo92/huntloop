@@ -1,4 +1,5 @@
 import {
+  Navigate,
   NavLink,
   Outlet,
   RouterProvider,
@@ -10,7 +11,6 @@ import Criteria from "@/pages/Criteria"
 import Dashboard from "@/pages/Dashboard"
 import Employers from "@/pages/Employers"
 import Listings from "@/pages/Listings"
-import Onboarding from "@/pages/Onboarding"
 import Runs from "@/pages/Runs"
 import Settings from "@/pages/Settings"
 
@@ -21,7 +21,6 @@ const NAV_ITEMS = [
   { to: "/criteria", label: "Criteria" },
   { to: "/runs", label: "Runs" },
   { to: "/settings", label: "Settings" },
-  { to: "/onboarding", label: "Get started" },
 ]
 
 const linkBase =
@@ -103,7 +102,8 @@ export const routes: RouteObject[] = [
       { path: "criteria", element: <Criteria /> },
       { path: "runs", element: <Runs /> },
       { path: "settings", element: <Settings /> },
-      { path: "onboarding", element: <Onboarding /> },
+      // GAP-3: Get Started was merged into Criteria. Old links land here.
+      { path: "onboarding", element: <Navigate to="/criteria" replace /> },
     ],
   },
 ]

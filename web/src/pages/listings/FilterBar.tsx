@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { JOB_STATUSES, STATUS_LABELS } from "./StatusSelect"
-import type { CompanyOut } from "@/pages/onboarding/types"
+import type { CompanyOut } from "@/pages/criteria/types"
 
 /**
  * D-12 / TRAK-05: the filter bar composes status multi-select, employer, score

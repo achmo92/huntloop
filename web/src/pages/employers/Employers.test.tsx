@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { api, apiPatch, apiPost } from "@/lib/api"
 import Employers from "../Employers"
 import { RegistryTable } from "./RegistryTable"
-import type { CompanyOut } from "../onboarding/types"
+import type { CompanyOut } from "../criteria/types"
 
 vi.mock("@/lib/api", () => {
   class ApiError extends Error {
@@ -182,13 +182,13 @@ describe("RegistryTable", () => {
 describe("Employers page", () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it("renders the empty state with the onboarding action when there are no companies", async () => {
+  it("renders the empty state with the describe action when there are no companies", async () => {
     mockedApi.mockResolvedValue([])
     renderWithProviders(<Employers />)
 
     expect(await screen.findByText("No employers yet")).toBeInTheDocument()
     expect(
-      screen.getByRole("button", { name: "Start onboarding" })
+      screen.getByRole("button", { name: "Describe your search" })
     ).toBeInTheDocument()
   })
 

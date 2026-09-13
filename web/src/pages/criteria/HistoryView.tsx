@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import type { CriteriaVersionWire } from "../onboarding/types"
+import type { CriteriaVersionWire } from "./types"
 
 /**
  * D-04: current + peekable history. Every version is listed with its source

@@ -1,5 +1,5 @@
 /**
- * Wire shapes shared by the onboarding/criteria surfaces. Colocated here
+ * Wire shapes shared by the intake/criteria surfaces. Colocated here
  * (rather than re-declared per component) so CoverageCard,
  * EmployerProposalsStep, and Criteria agree on one contract. The server
  * routers are the authority for these fields.

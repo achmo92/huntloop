@@ -45,11 +45,12 @@ import {
 } from "./iso"
 
 /**
- * The one correction surface for criteria (D-02): onboarding's review step and
- * the criteria page's edit flow both render this exact component, so the model
- * never edits criteria behind the user's back and re-edits always land in the
- * same form. Validation mirrors the server's `CriteriaPayload` so the user
- * sees inline errors before the request; the server stays the authority.
+ * The one correction surface for criteria (D-02): the intake setup's review
+ * step and the criteria page's edit flow both render this exact component, so
+ * the model never edits criteria behind the user's back and re-edits always
+ * land in the same form. Validation mirrors the server's `CriteriaPayload` so
+ * the user sees inline errors before the request; the server stays the
+ * authority.
  */
 
 export interface CriteriaPayload {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
@@ -47,6 +47,8 @@ function renderAt(path: string) {
     if (requestPath === "/api/dashboard") return EMPTY_DASHBOARD
     if (requestPath === "/api/settings") return SETTINGS
     if (requestPath === "/api/companies") return []
+    if (requestPath === "/api/criteria")
+      return { current: null, total_versions: 0 }
     return []
   })
   const client = new QueryClient({
@@ -62,7 +64,7 @@ function renderAt(path: string) {
 }
 
 describe("App", () => {
-  it("renders nav with all seven section labels", () => {
+  it("renders nav with all six section labels", () => {
     renderAt("/")
     for (const label of [
       "Dashboard",
@@ -71,12 +73,26 @@ describe("App", () => {
       "Criteria",
       "Runs",
       "Settings",
-      "Get started",
     ]) {
       // The nav renders twice (mobile top bar + desktop sidebar); either
       // instance is a valid link.
       expect(screen.getAllByRole("link", { name: label }).length).toBeGreaterThan(0)
     }
+    // GAP-3: Get Started is gone as a nav destination.
+    expect(screen.queryByRole("link", { name: "Get started" })).toBeNull()
+  })
+
+  it("redirects /onboarding to the merged Criteria page", async () => {
+    const router = renderAt("/onboarding")
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/criteria")
+    )
+    expect(
+      await screen.findByRole("heading", {
+        name: "Describe what you're looking for",
+      })
+    ).toBeInTheDocument()
   })
 
   it("navigates to Settings when clicking the Settings nav link", async () => {

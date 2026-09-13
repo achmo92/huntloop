@@ -12,13 +12,13 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet"
-import { CriteriaForm, type CriteriaPayload } from "./onboarding/CriteriaForm"
+import { CriteriaForm, type CriteriaPayload } from "./criteria/CriteriaForm"
 import { HistoryView } from "./criteria/HistoryView"
-import type { CriteriaCurrentResponse } from "./onboarding/types"
+import type { CriteriaCurrentResponse } from "./criteria/types"
 
 /**
  * The criteria page: the current version, editable through the SAME form the
- * onboarding review step uses (D-02 — the model never edits behind the user's
+ * intake review step uses (D-02 — the model never edits behind the user's
  * back), with a small "vN of M — view history" affordance (D-04). Day to day
  * the user just sees current; history is a peek, not the default.
  */
@@ -52,7 +52,7 @@ export default function Criteria() {
         title="Describe what you're looking for"
         description="Tell us in a paragraph what you want, and we'll turn it into criteria you can correct. Nothing is saved until you review it."
         actionLabel="Set up your search"
-        onAction={() => navigate("/onboarding")}
+        onAction={() => navigate("/criteria")}
       />
     )
   }
