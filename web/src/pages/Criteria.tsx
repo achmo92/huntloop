@@ -1,9 +1,7 @@
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { HistoryIcon } from "lucide-react"
 import { api, apiPost } from "@/lib/api"
-import { EmptyState } from "@/components/EmptyState"
 import { Button } from "@/components/ui/button"
 import {
   Sheet,
@@ -12,70 +10,140 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet"
+import { DescribeStep } from "./criteria/DescribeStep"
 import { CriteriaForm, type CriteriaPayload } from "./criteria/CriteriaForm"
+import { EmployerProposalsStep } from "./criteria/EmployerProposalsStep"
 import { HistoryView } from "./criteria/HistoryView"
 import type { CriteriaCurrentResponse } from "./criteria/types"
 
+type Step = 1 | 2 | 3
+
+const STEP_LABELS = ["Describe", "Review & correct", "Employers"] as const
+
 /**
- * The criteria page: the current version, editable through the SAME form the
- * intake review step uses (D-02 — the model never edits behind the user's
- * back), with a small "vN of M — view history" affordance (D-04). Day to day
- * the user just sees current; history is a peek, not the default.
+ * The single intake surface (GAP-3): Get Started was merged into Criteria.
+ * With no criteria, the describe-first flow (D-01) IS the empty state — there
+ * is no separate page to navigate to. With criteria, the current version stays
+ * editable in the SAME form (D-02) alongside the peekable versioned history
+ * (D-04), and "Start over with describe" re-enters the setup flow for a
+ * from-zero re-description.
  */
 export default function Criteria() {
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [savedVersion, setSavedVersion] = useState<number | null>(null)
+  // The setup flow (describe -> review/correct -> employers) lives in local
+  // state, mirroring the retired Onboarding page — three steps do not justify
+  // a wizard dependency.
+  const [settingUp, setSettingUp] = useState(false)
+  const [step, setStep] = useState<Step>(1)
+  const [suggested, setSuggested] = useState<unknown>(null)
 
   const criteriaQuery = useQuery({
     queryKey: ["criteria"],
     queryFn: () => api<CriteriaCurrentResponse>("/api/criteria"),
   })
 
-  async function handleSave(payload: CriteriaPayload) {
+  const current = criteriaQuery.data?.current ?? null
+  const total = criteriaQuery.data?.total_versions ?? 0
+  // No criteria means the setup flow is the page (D-01); an explicit
+  // re-describe keeps it open even after a save lands the first version.
+  const inSetup = settingUp || !current
+
+  async function saveVersion(payload: CriteriaPayload) {
     const result = await apiPost<{ version: number }>("/api/criteria", payload)
     setSavedVersion(result.version)
     await queryClient.invalidateQueries({ queryKey: ["criteria"] })
   }
 
-  if (criteriaQuery.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading your criteria…</p>
+  async function handleSetupSave(payload: CriteriaPayload) {
+    await saveVersion(payload)
+    setSettingUp(true)
+    setStep(3)
   }
 
-  const current = criteriaQuery.data?.current
-  const total = criteriaQuery.data?.total_versions ?? 0
+  function startOver() {
+    setSuggested(null)
+    setSavedVersion(null)
+    setStep(1)
+    setSettingUp(true)
+  }
 
-  if (!current) {
+  function finishSetup() {
+    setSettingUp(false)
+    setStep(1)
+  }
+
+  if (criteriaQuery.isLoading) {
     return (
-      <EmptyState
-        title="Describe what you're looking for"
-        description="Tell us in a paragraph what you want, and we'll turn it into criteria you can correct. Nothing is saved until you review it."
-        actionLabel="Set up your search"
-        onAction={() => navigate("/criteria")}
-      />
+      <p className="text-sm text-muted-foreground">Loading your criteria…</p>
     )
   }
 
   return (
-    <div className="grid max-w-3xl gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="font-heading text-2xl font-semibold tracking-tight">
-            Your criteria
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            v{current.version} of {total}
-          </p>
+    <div className="mx-auto grid max-w-3xl gap-8">
+      <header className="grid gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="font-heading text-2xl font-semibold tracking-tight">
+              {inSetup ? "Set up your search" : "Your criteria"}
+            </h1>
+            {!inSetup && current ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                v{current.version} of {total}
+              </p>
+            ) : null}
+          </div>
+          {!inSetup ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setHistoryOpen(true)}
+            >
+              <HistoryIcon />
+              View history
+            </Button>
+          ) : null}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => setHistoryOpen(true)}
-        >
-          <HistoryIcon />
-          View history
-        </Button>
+
+        {inSetup ? (
+          <ol className="flex flex-wrap items-center gap-2 text-sm">
+            {STEP_LABELS.map((label, index) => {
+              const number = (index + 1) as Step
+              const state =
+                number === step ? "current" : number < step ? "done" : "upcoming"
+              return (
+                <li key={label} className="flex items-center gap-2">
+                  <span
+                    className={
+                      state === "current"
+                        ? "flex size-6 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground"
+                        : state === "done"
+                          ? "flex size-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground"
+                          : "flex size-6 items-center justify-center rounded-full border border-border text-xs text-muted-foreground"
+                    }
+                  >
+                    {number}
+                  </span>
+                  <span
+                    className={
+                      state === "upcoming"
+                        ? "text-muted-foreground"
+                        : "text-foreground"
+                    }
+                  >
+                    {label}
+                  </span>
+                  {index < STEP_LABELS.length - 1 ? (
+                    <span aria-hidden="true" className="text-border">
+                      /
+                    </span>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ol>
+        ) : null}
       </header>
 
       {savedVersion !== null ? (
@@ -83,30 +151,82 @@ export default function Criteria() {
           role="status"
           className="rounded-lg bg-muted px-3 py-2 text-sm text-foreground"
         >
-          Saved as version {savedVersion}. Earlier versions stay available in
-          history.
+          Saved as version {savedVersion}. You can edit it any time — each save
+          adds a new version.
         </p>
       ) : null}
 
-      <CriteriaForm
-        defaultValues={current.payload}
-        onSubmit={handleSave}
-        submitLabel="Save new version"
-      />
+      {inSetup ? (
+        <>
+          {step === 1 ? (
+            <DescribeStep
+              onSuggested={(next) => {
+                setSuggested(next)
+                setStep(2)
+              }}
+            />
+          ) : null}
 
-      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-          <SheetHeader>
-            <SheetTitle>Criteria history</SheetTitle>
-            <SheetDescription>
-              Pick any two versions to see what changed between them.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="px-4 pb-4">
-            <HistoryView />
+          {step === 2 ? (
+            <section className="grid gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-heading text-lg font-medium">
+                  Review and correct
+                </h2>
+                <Button
+                  type="button"
+                  variant="link"
+                  onClick={() => {
+                    setSuggested(null)
+                    setStep(1)
+                  }}
+                >
+                  Start over
+                </Button>
+              </div>
+              <CriteriaForm
+                defaultValues={suggested ?? current?.payload}
+                onSubmit={handleSetupSave}
+                submitLabel="Save and continue"
+              />
+            </section>
+          ) : null}
+
+          {step === 3 ? <EmployerProposalsStep onDone={finishSetup} /> : null}
+        </>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">
+              This is your current version. Saving adds a new one — nothing is
+              overwritten.
+            </p>
+            <Button type="button" variant="link" onClick={startOver}>
+              Start over with describe
+            </Button>
           </div>
-        </SheetContent>
-      </Sheet>
+
+          <CriteriaForm
+            defaultValues={current?.payload}
+            onSubmit={saveVersion}
+            submitLabel="Save new version"
+          />
+
+          <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+            <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+              <SheetHeader>
+                <SheetTitle>Criteria history</SheetTitle>
+                <SheetDescription>
+                  Pick any two versions to see what changed between them.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="px-4 pb-4">
+                <HistoryView />
+              </div>
+            </SheetContent>
+          </Sheet>
+        </>
+      )}
     </div>
   )
 }

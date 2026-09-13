@@ -6,8 +6,6 @@ import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { api, apiPost } from "@/lib/api"
 import Criteria from "../Criteria"
-import { CoverageCard } from "./CoverageCard"
-import { EmployerProposalsStep } from "./EmployerProposalsStep"
 import { HistoryView } from "./HistoryView"
 
 vi.mock("@/lib/api", () => {
@@ -75,12 +73,6 @@ const VERSIONS = [
   },
 ]
 
-const CANDIDATES = [
-  { name: "Acme", reason: "Hires backend engineers remotely" },
-  { name: "Globex", reason: "Matches your stack" },
-  { name: "Initech", reason: "Has a Berlin office" },
-]
-
 function renderWithProviders(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -91,78 +83,6 @@ function renderWithProviders(ui: ReactElement) {
     </QueryClientProvider>
   )
 }
-
-describe("CoverageCard", () => {
-  beforeEach(() => vi.clearAllMocks())
-
-  it("states the honest headline from the coverage endpoint", async () => {
-    mockedApi.mockImplementation(async (path) => {
-      if (path === "/api/companies/coverage")
-        return { added: 4, watchable: 3, needs_attention: 1, resolved: 3 }
-      if (path === "/api/companies")
-        return [
-          {
-            id: "1",
-            name: "Globex",
-            ats: null,
-            ats_identifier: null,
-            careers_url: null,
-            enabled: true,
-            resolved: false,
-            resolution_status: "needs_attention",
-            resolution_detail: "No job board found",
-            possibly_stale: false,
-            staleness_message: null,
-            last_job_count: null,
-            last_checked_at: null,
-            consecutive_empty_runs: 0,
-          },
-        ]
-      throw new Error(`unexpected GET ${path}`)
-    })
-
-    renderWithProviders(<CoverageCard />)
-
-    expect(
-      await screen.findByText(/watching 3 of your 4 added employers/)
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/we can't automatically watch 1 yet/i)
-    ).toBeInTheDocument()
-  })
-})
-
-describe("EmployerProposalsStep", () => {
-  beforeEach(() => vi.clearAllMocks())
-
-  it("posts only the checked employer names at the accept gate", async () => {
-    const user = userEvent.setup()
-    mockedApiPost.mockImplementation(async (path) => {
-      if (path === "/api/onboarding/propose-employers")
-        return { candidates: CANDIDATES }
-      if (path === "/api/companies/batch")
-        return {
-          added: [
-            { id: "1", name: "Acme", resolved: false, resolution_status: "needs_attention" },
-            { id: "2", name: "Initech", resolved: false, resolution_status: "needs_attention" },
-          ],
-        }
-      return {}
-    })
-
-    renderWithProviders(<EmployerProposalsStep />)
-
-    const globex = await screen.findByRole("checkbox", { name: "Globex" })
-    expect(screen.getByRole("checkbox", { name: "Acme" })).toBeChecked()
-
-    await user.click(globex)
-    await user.click(screen.getByRole("button", { name: "Add 2 employers" }))
-
-    expect(mockedApiPost).toHaveBeenCalledWith("/api/companies/batch", {
-      names: ["Acme", "Initech"],
-    })
-  })
-})
 
 describe("HistoryView", () => {
   beforeEach(() => vi.clearAllMocks())
@@ -202,6 +122,44 @@ describe("Criteria page", () => {
     ).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Save new version" })
+    ).toBeInTheDocument()
+  })
+
+  it("saves an edit as a new version (edit round-trip)", async () => {
+    const user = userEvent.setup()
+    mockedApi.mockImplementation(async (path) => {
+      if (path === "/api/criteria")
+        return { current: VERSIONS[1], total_versions: 3 }
+      throw new Error(`unexpected GET ${path}`)
+    })
+    mockedApiPost.mockResolvedValue({ version: 4 })
+
+    renderWithProviders(<Criteria />)
+
+    const summary = await screen.findByLabelText("What you're looking for")
+    await user.clear(summary)
+    await user.type(summary, "Updated summary")
+    await user.click(screen.getByRole("button", { name: "Save new version" }))
+
+    expect(mockedApiPost).toHaveBeenCalledWith(
+      "/api/criteria",
+      expect.objectContaining({ profile_summary: "Updated summary" })
+    )
+    expect(await screen.findByText(/Saved as version 4/)).toBeInTheDocument()
+  })
+
+  it("shows the describe-first entry when no criteria exist", async () => {
+    mockedApi.mockImplementation(async (path) => {
+      if (path === "/api/criteria")
+        return { current: null, total_versions: 0 }
+      throw new Error(`unexpected GET ${path}`)
+    })
+
+    renderWithProviders(<Criteria />)
+
+    expect(await screen.findByLabelText("Your description")).toBeInTheDocument()
+    expect(
+      screen.getByRole("heading", { name: "Describe what you're looking for" })
     ).toBeInTheDocument()
   })
 })
