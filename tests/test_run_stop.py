@@ -11,8 +11,9 @@ This file owns all six behavior contracts from 04-14-PLAN.md Task 1.
 
 from __future__ import annotations
 
+import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy
@@ -26,7 +27,7 @@ from huntloop.criteria.schema import (
     LocationCriteria,
 )
 from huntloop.db.base import make_session_factory
-from huntloop.db.models import Company, Run, RunStatus
+from huntloop.db.models import Company, Job, Run, RunStatus, RunTrigger
 from huntloop.discovery.ats.base import FetchResult, FetchStatus, RawListing
 from huntloop.graph.build import run_discovery
 from huntloop.scheduler.jobs import find_run_in_progress
@@ -326,3 +327,361 @@ def test_run_discovery_stops_cooperatively_and_clears_marker(sessionmaker, monke
 
     # The marker is cleared once honored — a later run cannot inherit this stop.
     assert is_stop_requested(sessionmaker, run_id) is False
+
+
+# ---------------------------------------------------------------------------
+# GAP-16: finer substage checkpoints + race-safe terminal writes
+# ---------------------------------------------------------------------------
+
+_ZERO_COUNTERS = {
+    "companies_checked": 0,
+    "listings_fetched": 0,
+    "after_dedup": 0,
+    "after_deterministic": 0,
+    "after_triage": 0,
+    "scored": 0,
+    "new_jobs_written": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost_usd": 0,
+}
+
+
+def _counters(**overrides):
+    return {**_ZERO_COUNTERS, **overrides}
+
+
+def _seed_running_run(sessionmaker) -> uuid.UUID:
+    from huntloop.db.repository import RunRepository
+
+    session = sessionmaker()
+    try:
+        run = RunRepository(session).start(RunTrigger.MANUAL)
+        session.commit()
+        return run.id
+    finally:
+        session.close()
+
+
+class _ListingAdapter:
+    """Greenhouse-shaped fake returning a fixed listing set (no stop seeding)."""
+
+    platform = "greenhouse"
+
+    def __init__(self, listings: list[RawListing]) -> None:
+        self.listings = listings
+
+    def fetch(self, slug: str, *, client=None) -> FetchResult:
+        return FetchResult(status=FetchStatus.OK, listings=list(self.listings))
+
+
+class _StopOnScoreClient:
+    """Queues triage/scoring responses and seeds the stop marker on the first
+    scoring call — so the marker appears mid-batch, after a model call, exactly
+    where the finer GAP-16 checkpoints must observe it."""
+
+    def __init__(self, sessionmaker, *, triage: list, scoring: list) -> None:
+        self.sessionmaker = sessionmaker
+        self._triage = list(triage)
+        self._scoring = list(scoring)
+        self.calls = 0
+        self._seeded = False
+
+    def _seed_stop(self) -> None:
+        from huntloop.graph.cancellation import request_stop
+
+        self._seeded = True
+        session = self.sessionmaker()
+        try:
+            running = find_run_in_progress(session)
+            assert running is not None, "no RUNNING run to address the stop to"
+            request_stop(session, running.id)
+            session.commit()
+        finally:
+            session.close()
+
+    class _Completions:
+        def __init__(self, parent) -> None:
+            self.parent = parent
+
+        def create(self, **kwargs):
+            import json
+            from collections import namedtuple
+
+            parent = self.parent
+            system = kwargs["messages"][0]["content"]
+            parent.calls += 1
+            if "triaging job listings" in system:
+                payload = parent._triage.pop(0)
+            elif "scoring job listings" in system:
+                if not parent._seeded:
+                    parent._seed_stop()
+                payload = parent._scoring.pop(0)
+            else:
+                raise AssertionError(f"unknown system prompt: {system[:80]!r}")
+
+            Choice = namedtuple("Choice", ["message"])
+            Message = namedtuple("Message", ["content"])
+            Usage = namedtuple("Usage", ["prompt_tokens", "completion_tokens"])
+
+            class FakeCompletion:
+                def __init__(self) -> None:
+                    self.choices = [Choice(message=Message(content=json.dumps(payload)))]
+                    self.usage = Usage(prompt_tokens=10, completion_tokens=20)
+                    self.model = kwargs.get("model", "fake-model")
+
+            return FakeCompletion()
+
+    @property
+    def chat(self):
+        parent = self
+
+        class Chat:
+            completions = _StopOnScoreClient._Completions(parent)
+
+        return Chat()
+
+
+def test_raise_if_stop_requested_or_finished_contracts(sessionmaker):
+    from huntloop.db.repository import RunRepository
+    from huntloop.graph.cancellation import RunStoppedByUser, clear_stop_request, request_stop
+    from huntloop.graph.nodes import _raise_if_stop_requested_or_finished
+
+    run_id = _seed_running_run(sessionmaker)
+
+    # A RUNNING run with no marker returns cleanly.
+    assert _raise_if_stop_requested_or_finished(sessionmaker, str(run_id)) is None
+
+    # A marker naming this RUNNING run raises.
+    session = sessionmaker()
+    try:
+        request_stop(session, run_id)
+        session.commit()
+    finally:
+        session.close()
+    with pytest.raises(RunStoppedByUser):
+        _raise_if_stop_requested_or_finished(sessionmaker, str(run_id))
+
+    # A terminal row raises even after the marker is cleared.
+    session = sessionmaker()
+    try:
+        clear_stop_request(session, run_id)
+        RunRepository(session).finish(
+            run_id, status=RunStatus.STOPPED, **_counters()
+        )
+        session.commit()
+    finally:
+        session.close()
+    with pytest.raises(RunStoppedByUser):
+        _raise_if_stop_requested_or_finished(sessionmaker, str(run_id))
+
+    # An absent run raises too.
+    with pytest.raises(RunStoppedByUser):
+        _raise_if_stop_requested_or_finished(sessionmaker, str(uuid.uuid4()))
+
+
+def test_raise_if_stop_requested_stays_marker_only(sessionmaker):
+    """The GAP-4 helper is unchanged: no marker is clean even on a terminal row."""
+    from huntloop.db.repository import RunRepository
+    from huntloop.graph.nodes import _raise_if_stop_requested
+
+    run_id = _seed_running_run(sessionmaker)
+    session = sessionmaker()
+    try:
+        RunRepository(session).finish(run_id, status=RunStatus.STOPPED, **_counters())
+        session.commit()
+    finally:
+        session.close()
+
+    assert _raise_if_stop_requested(sessionmaker, str(run_id)) is None
+
+
+def test_finish_if_running_never_overwrites_terminal_row(sessionmaker):
+    from huntloop.db.repository import RunRepository
+
+    run_id = _seed_running_run(sessionmaker)
+    session = sessionmaker()
+    try:
+        repo = RunRepository(session)
+
+        applied = repo.finish_if_running(
+            run_id, status=RunStatus.STOPPED, error_summary="stopped", **_counters()
+        )
+        assert applied is not None
+        assert applied.status is RunStatus.STOPPED
+        finished_at = applied.finished_at
+        session.commit()
+
+        overwritten = repo.finish_if_running(
+            run_id,
+            status=RunStatus.SUCCESS,
+            error_summary="should be ignored",
+            **_counters(companies_checked=99),
+        )
+        assert overwritten is None
+
+        session.expire_all()
+        row = session.get(Run, run_id)
+        assert row.status is RunStatus.STOPPED
+        assert row.finished_at == finished_at
+        assert row.companies_checked == 0
+
+        # finish() stays unconditional: it applies even to a terminal row.
+        repo.finish(
+            run_id, status=RunStatus.SUCCESS, **_counters(companies_checked=99)
+        )
+        assert row.status is RunStatus.SUCCESS
+        assert row.companies_checked == 99
+    finally:
+        session.close()
+
+
+def test_pending_stop_blocks_write_batch(sessionmaker, monkeypatch):
+    """A stop arriving after scoring but before the write gate => zero jobs.
+
+    One listing isolates the pre-write checkpoint: the marker is seeded during
+    that listing's scoring call, the batch loop then ends, and process_employer's
+    full stop/terminal gate immediately before write_batch must abort.
+    """
+    import huntloop.graph.nodes as nodes_mod
+
+    seed_criteria(sessionmaker)
+    make_company(sessionmaker, "WriteGateCo", "writegate")
+
+    adapter = _ListingAdapter([make_listing("wg-1")])
+    monkeypatch.setattr(nodes_mod, "get_adapter", lambda platform: adapter)
+
+    client = _StopOnScoreClient(
+        sessionmaker, triage=[TRIAGE_KEEP], scoring=[dims_response(4)]
+    )
+
+    summary = run_discovery(
+        sessionmaker=sessionmaker,
+        llm_client=client,
+        http_client=object(),
+        concurrency=1,
+    )
+
+    assert summary.status == RunStatus.STOPPED.value
+    session = sessionmaker()
+    try:
+        run = session.execute(select(Run)).scalars().one()
+        assert run.status is RunStatus.STOPPED
+        assert session.execute(select(Job)).scalars().all() == []
+    finally:
+        session.close()
+
+
+def test_stop_during_scoring_aborts_at_next_listing(sessionmaker, monkeypatch):
+    """A stop mid-batch aborts at the NEXT listing, not after the whole batch."""
+    import huntloop.graph.nodes as nodes_mod
+
+    seed_criteria(sessionmaker)
+    make_company(sessionmaker, "PerListingCo", "perlisting")
+
+    adapter = _ListingAdapter([make_listing("pl-1"), make_listing("pl-2")])
+    monkeypatch.setattr(nodes_mod, "get_adapter", lambda platform: adapter)
+
+    client = _StopOnScoreClient(
+        sessionmaker, triage=[TRIAGE_KEEP], scoring=[dims_response(4)]
+    )
+
+    summary = run_discovery(
+        sessionmaker=sessionmaker,
+        llm_client=client,
+        http_client=object(),
+        concurrency=1,
+    )
+
+    assert summary.status == RunStatus.STOPPED.value
+    # Only the first listing was triaged/scored; the second aborted at its
+    # top-of-loop checkpoint before any model call.
+    assert client.calls == 2
+
+    session = sessionmaker()
+    try:
+        run = session.execute(select(Run)).scalars().one()
+        assert run.status is RunStatus.STOPPED
+        assert session.execute(select(Job)).scalars().all() == []
+    finally:
+        session.close()
+
+
+class _HtmlFetcher:
+    """A statically-returning page fetcher for the crawl checkpoint contract."""
+
+    def __init__(self, html: str) -> None:
+        self.html = html
+        self.fetched: list[str] = []
+
+    def fetch(self, url: str):
+        from types import SimpleNamespace
+
+        self.fetched.append(url)
+        return SimpleNamespace(ok=True, html=self.html, status_code=200, error=None)
+
+
+def test_crawl_careers_honors_should_stop_between_pages():
+    """`should_stop` fires after the base fetch and at the top of the detail
+    loop, and a raised stop is NOT swallowed by the crawl's broad except."""
+    from huntloop.discovery.crawl.careers import crawl_careers
+    from huntloop.graph.cancellation import RunStoppedByUser
+
+    html = (
+        "<html><body><p>"
+        + ("careers " * 80)
+        + "</p>"
+        '<a href="https://acme.com/jobs/1">Engineer</a>'
+        '<a href="https://acme.com/jobs/2">Designer</a>'
+        "</body></html>"
+    )
+    fetcher = _HtmlFetcher(html)
+
+    checks: list[int] = []
+
+    def _should_stop() -> None:
+        checks.append(len(checks))
+        if len(checks) >= 2:
+            raise RunStoppedByUser()
+
+    with pytest.raises(RunStoppedByUser):
+        crawl_careers(fetcher, "https://acme.com/careers", should_stop=_should_stop)
+
+    # First check after the base fetch, second entering the detail loop — the
+    # raise propagated out instead of being caught by the crawl's except.
+    assert checks == [0, 1]
+
+
+def test_stop_during_second_employer_fetch_writes_no_jobs_for_it(
+    sessionmaker, monkeypatch
+):
+    """End to end (concurrency=1): the second employer aborts post-fetch, so only
+    the first employer's job is written while the run finalizes STOPPED."""
+    import huntloop.graph.nodes as nodes_mod
+
+    seed_criteria(sessionmaker)
+    make_company(sessionmaker, "StopFirst", "stopfirst")
+    make_company(sessionmaker, "StopSecond", "stopsecond")
+
+    adapter = _StopSeedingAdapter(sessionmaker, [make_listing("stop-z")])
+    monkeypatch.setattr(nodes_mod, "get_adapter", lambda platform: adapter)
+
+    client = _RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+
+    summary = run_discovery(
+        sessionmaker=sessionmaker,
+        llm_client=client,
+        http_client=object(),
+        concurrency=1,
+    )
+
+    assert summary.status == RunStatus.STOPPED.value
+    session = sessionmaker()
+    try:
+        runs = session.execute(select(Run)).scalars().all()
+        assert len(runs) == 1, "exactly one Run row, never a stuck RUNNING row"
+        assert runs[0].status is RunStatus.STOPPED
+        jobs = session.execute(select(Job)).scalars().all()
+        assert len(jobs) == 1, "the aborted second employer wrote no jobs"
+    finally:
+        session.close()
