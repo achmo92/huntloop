@@ -25,9 +25,19 @@ from huntloop.api.background import run_in_background
 from huntloop.api.deps import get_session
 from huntloop.db.base import get_engine, make_session_factory
 from huntloop.db.models import Company, Run, RunError, RunStatus, RunTrigger
-from huntloop.db.repository import RunRepository
+from huntloop.db.repository import RunRepository, SettingsRepository
+from huntloop.db.run_liveness import (
+    STOPPED_STALE_REASON,
+    finalize_stale_run,
+    reconcile_stale_runs,
+    run_is_live,
+)
 from huntloop.graph.build import run_discovery
-from huntloop.graph.cancellation import request_stop
+from huntloop.graph.cancellation import (
+    STOP_REQUEST_SETTING_KEY,
+    clear_stop_request,
+    request_stop,
+)
 from huntloop.scheduler.jobs import find_run_in_progress
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -132,7 +142,12 @@ def list_runs(
     limit: int = Query(default=20, ge=1, le=200),
     session: Session = Depends(get_session),
 ) -> list[RunOut]:
-    """Run history, newest first (RUN-09). An empty database is a valid answer."""
+    """Run history, newest first (RUN-09). An empty database is a valid answer.
+
+    GAP-15: reconcile stale RUNNING rows on read, so the existing orphaned rows
+    are finalized the first time the Runs page loads.
+    """
+    reconcile_stale_runs(session)
     return [_run_out(run) for run in RunRepository(session).list_recent(limit)]
 
 
@@ -173,7 +188,11 @@ def trigger_run(session: Session = Depends(get_session)):
     The 202 deliberately carries no run_id: the Run row is created inside
     ``run_discovery`` a moment later, and the UI watches the newest RUNNING row
     appear via GET /api/runs.
+
+    GAP-15: reconcile stale RUNNING rows BEFORE the overlap check, so a dead run
+    can never 409 the trigger — only a genuinely live run does.
     """
+    reconcile_stale_runs(session)
     in_progress = find_run_in_progress(session)
     if in_progress is not None:
         return JSONResponse(
@@ -205,6 +224,12 @@ def stop_run(run_id: uuid.UUID, session: Session = Depends(get_session)):
     boundary. A run already at a terminal status is a rare race (the UI only
     offers Stop on in-progress rows), answered 409 naming that status rather
     than pretending to stop it.
+
+    GAP-15: a RUNNING target whose process has died is stale. It is finalized
+    immediately as STOPPED with an honest "no longer active" reason and answered
+    200 ``{"status": "stopped"}`` — the action actually completed, rather than
+    claiming a cooperative marker a dead process will never observe. A live
+    target keeps the original 202 ``{"status": "stop requested"}`` + marker.
     """
     run = RunRepository(session).get(run_id)
     if run is None:
@@ -217,6 +242,17 @@ def stop_run(run_id: uuid.UUID, session: Session = Depends(get_session)):
                 "detail": f"run already finished with status {run.status.value}"
             },
         )
+
+    if not run_is_live(session, run):
+        finalize_stale_run(
+            session, run, status=RunStatus.STOPPED, reason=STOPPED_STALE_REASON
+        )
+        # If a marker naming this run is lingering, clear it — no marker can be
+        # honored for a run that has already ended.
+        if SettingsRepository(session).get_value(STOP_REQUEST_SETTING_KEY) == str(run_id):
+            clear_stop_request(session)
+        session.commit()
+        return JSONResponse(status_code=200, content={"status": "stopped"})
 
     request_stop(session, run_id)
     # Commit with the response: the marker must be durable for the run path

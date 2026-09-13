@@ -18,6 +18,7 @@ from huntloop.config import Config, load_effective_config
 from huntloop.db.base import get_engine, make_session_factory
 from huntloop.db.models import Run, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
+from huntloop.db.run_liveness import reconcile_stale_runs
 from huntloop.scheduler.build import build_trigger
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,10 @@ def execute_scheduled_run(
 
     session = sessionmaker()
     try:
+        # GAP-15: finalize any dead RUNNING row first, so its stale overlap
+        # marker cannot block this fire. The injected now threads through for
+        # determinism.
+        reconcile_stale_runs(session, now=now)
         in_progress = find_run_in_progress(session)
         if in_progress is not None:
             reason = (

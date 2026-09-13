@@ -24,6 +24,11 @@ from huntloop.config import load_effective_config
 from huntloop.criteria.loader import get_active_criteria
 from huntloop.db.models import Company, Job, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
+from huntloop.db.run_liveness import (
+    clear_run_lease,
+    record_run_heartbeat,
+    start_run_heartbeat,
+)
 from huntloop.discovery.ats.base import make_client
 from huntloop.discovery.fetch.page import RenderedPageFetcher, StaticPageFetcher
 from huntloop.graph.cancellation import RunStoppedByUser, clear_stop_request
@@ -205,9 +210,12 @@ def run_discovery(
         session.close()
 
     # 2. Create the Run row and commit so the run id is durable before any work.
+    #    GAP-15: the lease is written with the Run row so a live run is never
+    #    briefly unclassifiable, for every caller (CLI/manual/scheduler).
     session = sessionmaker()
     try:
         run = RunRepository(session).start(trigger)
+        record_run_heartbeat(session, run.id)
         session.commit()
         run_id = run.id
     finally:
@@ -235,6 +243,11 @@ def run_discovery(
             llm_client = get_llm_client(credentials_session)
         finally:
             credentials_session.close()
+
+    # GAP-15: refresh the run's lease on a serial daemon thread for the life of
+    # the run. One writer avoids cross-branch SQLite contention in the employer
+    # fan-out; the finally below always stops it.
+    heartbeat = start_run_heartbeat(sessionmaker, run_id)
 
     # 4-5. Build, invoke, aggregate.
     try:
@@ -293,6 +306,9 @@ def run_discovery(
             top_listings=_load_top_listings(sessionmaker, run_id),
         )
 
+        # GAP-15: the run is terminal, so its lease is no longer needed. Clear it
+        # through a fresh session (the graph's sessions are closed by now).
+        _clear_run_lease(sessionmaker, run_id)
         return summary
 
     except RunStoppedByUser:
@@ -321,6 +337,7 @@ def run_discovery(
                 error_summary="stopped by user request",
             )
             clear_stop_request(session)
+            clear_run_lease(session, run_id)
             session.commit()
         finally:
             session.close()
@@ -366,10 +383,24 @@ def run_discovery(
                 cost_usd=spend_tracker.spent_usd,
                 error_summary=f"run aborted: {type(exc).__name__}: {exc}",
             )
+            clear_run_lease(session, run_id)
             session.commit()
         finally:
             session.close()
         raise
+    finally:
+        # GAP-15: always stop the lease heartbeat, on every exit path.
+        heartbeat.stop()
+
+
+def _clear_run_lease(sessionmaker: sessionmaker, run_id: uuid.UUID) -> None:
+    """Clear a run's GAP-15 lease on its own session (best-effort caller)."""
+    session = sessionmaker()
+    try:
+        clear_run_lease(session, run_id)
+        session.commit()
+    finally:
+        session.close()
 
 
 def _load_top_listings(sessionmaker: sessionmaker, run_id: uuid.UUID, limit: int = 10) -> tuple[dict, ...]:
