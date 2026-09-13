@@ -25,16 +25,16 @@ from huntloop.api.background import run_in_background
 from huntloop.api.deps import get_session
 from huntloop.db.base import get_engine, make_session_factory
 from huntloop.db.models import Company, Run, RunError, RunStatus, RunTrigger
-from huntloop.db.repository import RunRepository, SettingsRepository
+from huntloop.db.repository import RunRepository
 from huntloop.db.run_liveness import (
     STOPPED_STALE_REASON,
+    finalize_grace_expired_stops,
     finalize_stale_run,
     reconcile_stale_runs,
     run_is_live,
 )
 from huntloop.graph.build import run_discovery
 from huntloop.graph.cancellation import (
-    STOP_REQUEST_SETTING_KEY,
     clear_stop_request,
     request_stop,
 )
@@ -146,8 +146,12 @@ def list_runs(
 
     GAP-15: reconcile stale RUNNING rows on read, so the existing orphaned rows
     are finalized the first time the Runs page loads.
+    GAP-16: also sweep grace-expired stops. This is the UI's 3s poll, so a run
+    the user stopped reaches STOPPED without a manual refresh even when its
+    thread is stuck.
     """
     reconcile_stale_runs(session)
+    finalize_grace_expired_stops(session)
     return [_run_out(run) for run in RunRepository(session).list_recent(limit)]
 
 
@@ -191,8 +195,11 @@ def trigger_run(session: Session = Depends(get_session)):
 
     GAP-15: reconcile stale RUNNING rows BEFORE the overlap check, so a dead run
     can never 409 the trigger — only a genuinely live run does.
+    GAP-16: also sweep grace-expired stops before the overlap check, so a run the
+    user stopped never 409s the next trigger.
     """
     reconcile_stale_runs(session)
+    finalize_grace_expired_stops(session)
     in_progress = find_run_in_progress(session)
     if in_progress is not None:
         return JSONResponse(
@@ -230,6 +237,11 @@ def stop_run(run_id: uuid.UUID, session: Session = Depends(get_session)):
     200 ``{"status": "stopped"}`` — the action actually completed, rather than
     claiming a cooperative marker a dead process will never observe. A live
     target keeps the original 202 ``{"status": "stop requested"}`` + marker.
+
+    GAP-16: a live stop that the run thread does not honor within the
+    configurable grace window is finalized STOPPED by the durable sweep driven
+    by ``GET /api/runs`` (the UI's 3s poll), ``POST /api/runs``, and the
+    scheduler gate — no stuck thread is waited on.
     """
     run = RunRepository(session).get(run_id)
     if run is None:
@@ -247,10 +259,9 @@ def stop_run(run_id: uuid.UUID, session: Session = Depends(get_session)):
         finalize_stale_run(
             session, run, status=RunStatus.STOPPED, reason=STOPPED_STALE_REASON
         )
-        # If a marker naming this run is lingering, clear it — no marker can be
-        # honored for a run that has already ended.
-        if SettingsRepository(session).get_value(STOP_REQUEST_SETTING_KEY) == str(run_id):
-            clear_stop_request(session)
+        # Clear any marker + requested-at timestamp this run left behind — no
+        # marker can be honored for a run that has already ended (GAP-16).
+        clear_stop_request(session, run_id)
         session.commit()
         return JSONResponse(status_code=200, content={"status": "stopped"})
 

@@ -306,9 +306,10 @@ def run_discovery(
             top_listings=_load_top_listings(sessionmaker, run_id),
         )
 
-        # GAP-15: the run is terminal, so its lease is no longer needed. Clear it
-        # through a fresh session (the graph's sessions are closed by now).
-        _clear_run_lease(sessionmaker, run_id)
+        # GAP-15/GAP-16: the run is terminal, so its lease is no longer needed,
+        # and any lingering stop request for it must not affect a later run.
+        # Clear both through a fresh session (the graph's sessions are closed).
+        _clear_run_artifacts(sessionmaker, run_id)
         return summary
 
     except RunStoppedByUser:
@@ -321,7 +322,10 @@ def run_discovery(
         # terminal).
         session = sessionmaker()
         try:
-            RunRepository(session).finish(
+            # GAP-16: never overwrite a row the durable grace sweep already
+            # finalized STOPPED. finish_if_running is a no-op in that race, so
+            # the sweep's GRACE_EXPIRED_STOP_REASON survives untouched.
+            RunRepository(session).finish_if_running(
                 run_id,
                 status=RunStatus.STOPPED,
                 companies_checked=0,
@@ -336,7 +340,7 @@ def run_discovery(
                 cost_usd=spend_tracker.spent_usd,
                 error_summary="stopped by user request",
             )
-            clear_stop_request(session)
+            clear_stop_request(session, run_id)
             clear_run_lease(session, run_id)
             session.commit()
         finally:
@@ -368,7 +372,9 @@ def run_discovery(
         # spending money still spent it.
         session = sessionmaker()
         try:
-            RunRepository(session).finish(
+            # GAP-16: never overwrite a terminal row (e.g. one the grace sweep
+            # already finalized) with a late FAILED.
+            RunRepository(session).finish_if_running(
                 run_id,
                 status=RunStatus.FAILED,
                 companies_checked=0,
@@ -393,11 +399,16 @@ def run_discovery(
         heartbeat.stop()
 
 
-def _clear_run_lease(sessionmaker: sessionmaker, run_id: uuid.UUID) -> None:
-    """Clear a run's GAP-15 lease on its own session (best-effort caller)."""
+def _clear_run_artifacts(sessionmaker: sessionmaker, run_id: uuid.UUID) -> None:
+    """Clear a run's lease + any lingering stop request on their own session.
+
+    Best-effort caller: the success path clears both so a stop requested after
+    the last checkpoint cannot linger into a later run.
+    """
     session = sessionmaker()
     try:
         clear_run_lease(session, run_id)
+        clear_stop_request(session, run_id)
         session.commit()
     finally:
         session.close()

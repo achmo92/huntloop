@@ -38,6 +38,11 @@ class Config:
     # GAP-15: how long a RUNNING run may go without a refreshed lease before it
     # is classified stale and reconciled. 8x the heartbeat interval (15s).
     run_stale_after_seconds: int
+    # GAP-16: how long a requested stop may go unhonored before the durable
+    # sweep finalizes the run STOPPED without waiting for the run thread. 60s
+    # equals the LLM client's per-request timeout, so a healthy run gets one
+    # full bounded model call to reach its next checkpoint.
+    run_stop_grace_seconds: int
     run_at: str
     timezone: str
     run_spend_cap_usd: Decimal | None
@@ -191,6 +196,7 @@ def load_config() -> Config:
     max_employer_concurrency = _positive_int_env("HUNTLOOP_MAX_EMPLOYER_CONCURRENCY", 5)
     stale_after_empty_runs = _positive_int_env("HUNTLOOP_STALE_AFTER_EMPTY_RUNS", 3)
     run_stale_after_seconds = _positive_int_env("HUNTLOOP_RUN_STALE_AFTER_SECONDS", 120)
+    run_stop_grace_seconds = _positive_int_env("HUNTLOOP_RUN_STOP_GRACE_SECONDS", 60)
 
     run_at = os.environ.get("HUNTLOOP_RUN_AT") or "08:00"
     parse_run_at(run_at)  # fail fast at boot, not when the scheduler builds its trigger
@@ -209,6 +215,7 @@ def load_config() -> Config:
         max_employer_concurrency=max_employer_concurrency,
         stale_after_empty_runs=stale_after_empty_runs,
         run_stale_after_seconds=run_stale_after_seconds,
+        run_stop_grace_seconds=run_stop_grace_seconds,
         run_at=run_at,
         timezone=timezone,
         run_spend_cap_usd=run_spend_cap_usd,
