@@ -15,6 +15,9 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from huntloop.api.routers import (
     companies,
@@ -26,6 +29,36 @@ from huntloop.api.routers import (
     runs,
     settings,
 )
+
+
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles that falls back to index.html on client-side-route misses.
+
+    ``html=True`` alone serves index.html only for "/" — every client-side
+    route (/listings, /employers, ...) 404s on direct navigation or refresh
+    (GAP-1, plan 04-12). This subclass overrides the public ``get_response``
+    seam: when the lookup would 404 for a GET/HEAD request whose path is NOT
+    under /api, it serves index.html from the same dist directory (200), so
+    the SPA router boots and renders the deep-linked route.
+
+    Requests under /api keep the plain 404 (unknown API paths never receive
+    the SPA shell), and non-GET/HEAD methods keep their 405 — only browser
+    navigation falls back. The no-dist guard in ``create_app`` is untouched:
+    nothing is mounted without a build, so this class never fabricates a
+    shell from nothing.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if (
+                exc.status_code == 404
+                and scope["method"] in ("GET", "HEAD")
+                and not scope["path"].startswith("/api")
+            ):
+                return await super().get_response("index.html", scope)
+            raise
 
 
 def create_app() -> FastAPI:
@@ -51,7 +84,10 @@ def create_app() -> FastAPI:
     # web/dist; 04-11's Dockerfile stage lands dist at /app/web/dist).
     dist = _frontend_dist()
     if dist is not None:
-        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+        # SPAStaticFiles (not bare StaticFiles): html=True still serves
+        # index.html at "/", and any other GET/HEAD miss outside /api falls
+        # back to index.html so client routes survive refresh (GAP-1, 04-12).
+        app.mount("/", SPAStaticFiles(directory=dist, html=True), name="web")
 
     return app
 
