@@ -85,7 +85,8 @@ export function RunNowButton({
           role="status"
           data-testid="run-now-toast"
           className={cn(
-            "fixed right-4 bottom-4 z-50 max-w-sm rounded-lg border bg-popover px-3 py-2 text-sm shadow-md",
+            "fixed right-4 bottom-4 z-50 max-w-sm rounded-xl border bg-popover px-3.5 py-2.5 text-sm shadow-lg",
+            "animate-in fade-in slide-in-from-bottom-2",
             isFailure
               ? "border-destructive/40 text-destructive"
               : "border-border text-popover-foreground"

@@ -62,10 +62,10 @@ export default function Runs() {
     <div className="grid gap-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-heading text-2xl font-semibold tracking-tight">
+          <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
             Runs
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
             Every discovery run and what it found — a quiet week is explained
             here, never ambiguous.
           </p>
@@ -85,7 +85,7 @@ export default function Runs() {
           We couldn't load your run history. Refresh to try again.
         </p>
       ) : isEmpty ? (
-        <div className="grid justify-items-center gap-2">
+        <div className="grid justify-items-center gap-1">
           <EmptyState
             title="No runs yet"
             description="Start your first discovery run and it'll appear here with its results."
@@ -125,7 +125,9 @@ export default function Runs() {
                 aria-label={`View run from ${formatDateTime(run.started_at)}`}
                 className="cursor-pointer"
               >
-                <TableCell>{formatDateTime(run.started_at)}</TableCell>
+                <TableCell className="tabular-nums">
+                  {formatDateTime(run.started_at)}
+                </TableCell>
                 <TableCell>
                   <RunTriggerBadge trigger={run.trigger} />
                 </TableCell>
@@ -161,7 +163,7 @@ export default function Runs() {
                 <TableCell className="text-right tabular-nums">
                   {run.tokens_out}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">
+                <TableCell className="text-right font-medium tabular-nums">
                   {formatCost(run.cost_usd)}
                 </TableCell>
               </TableRow>

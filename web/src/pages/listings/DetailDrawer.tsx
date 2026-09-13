@@ -181,7 +181,7 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
               <section aria-labelledby="score-heading" className="grid gap-3">
                 <h3
                   id="score-heading"
-                  className="font-heading text-sm font-medium"
+                  className="font-heading text-sm font-semibold tracking-tight"
                 >
                   Score
                 </h3>
@@ -198,26 +198,40 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
                   ) : null}
                 </div>
 
-                <div className="grid gap-2">
+                <div className="grid gap-2.5">
                   {DIMENSIONS.map(({ key, label }) => {
                     const dimension = detail.score_dimensions?.[key]
+                    const score = dimension?.score
                     return (
                       <div
                         key={key}
                         data-testid={`dimension-${key}`}
-                        className="rounded-lg border border-border/60 px-3 py-2"
+                        className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2.5"
                       >
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-sm font-medium">{label}</span>
-                          <span className="text-sm text-muted-foreground tabular-nums">
-                            {dimension?.score === null ||
-                            dimension?.score === undefined
+                          <span className="font-heading text-sm font-semibold tabular-nums">
+                            {score === null || score === undefined
                               ? "—"
-                              : `${dimension.score}/5`}
+                              : `${score}/5`}
                           </span>
                         </div>
+                        <div
+                          className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
+                          aria-hidden="true"
+                        >
+                          <div
+                            className="h-full rounded-full bg-primary/70"
+                            style={{
+                              width:
+                                score === null || score === undefined
+                                  ? 0
+                                  : `${Math.max(0, Math.min(100, (score / 5) * 100))}%`,
+                            }}
+                          />
+                        </div>
                         {dimension?.reason ? (
-                          <p className="mt-1 text-sm text-muted-foreground text-pretty">
+                          <p className="mt-2 text-sm text-muted-foreground text-pretty">
                             {dimension.reason}
                           </p>
                         ) : null}
@@ -242,7 +256,9 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
               </section>
 
               <section className="grid gap-1">
-                <h3 className="font-heading text-sm font-medium">Facts</h3>
+                <h3 className="font-heading text-sm font-semibold tracking-tight">
+                  Facts
+                </h3>
                 <p data-testid="open-duration" className="text-sm">
                   {detail.open_duration_days === null
                     ? "Open duration unknown"
@@ -254,7 +270,9 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
               </section>
 
               <section className="grid gap-3">
-                <h3 className="font-heading text-sm font-medium">Notes</h3>
+                <h3 className="font-heading text-sm font-semibold tracking-tight">
+                  Notes
+                </h3>
                 {detail.notes.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No notes yet.</p>
                 ) : (
@@ -307,7 +325,7 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
               </section>
 
               <section className="grid gap-3">
-                <h3 className="font-heading text-sm font-medium">
+                <h3 className="font-heading text-sm font-semibold tracking-tight">
                   Status timeline
                 </h3>
                 {detail.status_events.length === 0 ? (
@@ -315,13 +333,17 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
                     No status changes yet.
                   </p>
                 ) : (
-                  <ol className="grid gap-2">
+                  <ol className="relative grid gap-3 border-l border-border/70 pl-4">
                     {detail.status_events.map((event, index) => (
                       <li
                         key={`${event.to_status}-${event.changed_at}-${index}`}
                         data-testid="timeline-event"
-                        className="flex items-baseline justify-between gap-3 text-sm"
+                        className="relative flex items-baseline justify-between gap-3 text-sm"
                       >
+                        <span
+                          aria-hidden="true"
+                          className="absolute top-1.5 -left-5 size-2 rounded-full border-2 border-background bg-primary/60"
+                        />
                         <span>
                           {event.from_status
                             ? `${statusLabel(event.from_status)} → ${statusLabel(
@@ -329,7 +351,7 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
                               )}`
                             : `→ ${statusLabel(event.to_status)}`}
                         </span>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="text-xs text-muted-foreground tabular-nums">
                           {formatDateTime(event.changed_at)}
                         </span>
                       </li>
@@ -339,7 +361,9 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
               </section>
 
               <section className="grid gap-2">
-                <h3 className="font-heading text-sm font-medium">Description</h3>
+                <h3 className="font-heading text-sm font-semibold tracking-tight">
+                  Description
+                </h3>
                 {/* Sanitized plain text rendered as a text node only (UI-06). */}
                 <p
                   data-testid="job-description"

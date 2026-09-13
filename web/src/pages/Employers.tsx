@@ -25,10 +25,10 @@ export default function Employers() {
   return (
     <div className="grid gap-6">
       <header>
-        <h1 className="font-heading text-2xl font-semibold tracking-tight">
+        <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
           Employers
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
           The employers we watch — and how much of your target we can honestly
           cover automatically.
         </p>

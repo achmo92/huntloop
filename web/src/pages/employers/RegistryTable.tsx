@@ -267,8 +267,10 @@ export function RegistryTable() {
 
                 <TableCell>
                   <div className="flex flex-col">
-                    <span>{company.last_job_count ?? "—"} jobs</span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="tabular-nums">
+                      {company.last_job_count ?? "—"} jobs
+                    </span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
                       {formatDate(company.last_checked_at)}
                     </span>
                   </div>

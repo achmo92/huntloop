@@ -62,35 +62,40 @@ export function CoverageCard() {
         </CardDescription>
       </CardHeader>
       {coverage.needs_attention > 0 ? (
-        <CardContent className="grid gap-3">
-          <p className="flex items-center gap-2 text-sm text-foreground">
-            <AlertTriangleIcon className="size-4 text-destructive" />
-            We can't automatically watch {coverage.needs_attention} yet — they
-            need attention.
-          </p>
-          {needingAttention.length > 0 ? (
-            <ul className="grid gap-1">
-              {needingAttention.map((company) => (
-                <li
-                  key={company.id}
-                  className="flex items-center justify-between gap-3 text-sm"
-                >
-                  <span>{company.name}</span>
-                  {company.resolution_detail ? (
-                    <Badge variant="outline" className="font-normal">
-                      {company.resolution_detail}
-                    </Badge>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <Link
-            to="/employers"
-            className="text-sm text-primary underline-offset-4 hover:underline"
-          >
-            Review employers and retry
-          </Link>
+        <CardContent>
+          <div className="grid gap-3 rounded-xl border border-destructive/25 bg-destructive/5 p-3.5">
+            <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <AlertTriangleIcon
+                aria-hidden="true"
+                className="size-4 shrink-0 text-destructive"
+              />
+              We can't automatically watch {coverage.needs_attention} yet — they
+              need attention.
+            </p>
+            {needingAttention.length > 0 ? (
+              <ul className="grid gap-1.5">
+                {needingAttention.map((company) => (
+                  <li
+                    key={company.id}
+                    className="flex items-center justify-between gap-3 text-sm"
+                  >
+                    <span>{company.name}</span>
+                    {company.resolution_detail ? (
+                      <Badge variant="outline" className="font-normal">
+                        {company.resolution_detail}
+                      </Badge>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <Link
+              to="/employers"
+              className="w-fit text-sm font-medium text-primary underline-offset-4 hover:underline"
+            >
+              Review employers and retry
+            </Link>
+          </div>
         </CardContent>
       ) : null}
     </Card>

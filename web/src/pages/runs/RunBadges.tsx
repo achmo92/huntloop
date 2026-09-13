@@ -1,5 +1,4 @@
 import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
 import { runStatusLabel, runStatusTone, runTriggerLabel } from "./types"
 
 /**
@@ -7,10 +6,6 @@ import { runStatusLabel, runStatusTone, runTriggerLabel } from "./types"
  * their own tone so "the overlap guard skipped this fire" and "the spend cap
  * stopped scoring" never read like the run errored.
  */
-
-const TONE_CLASS: Record<string, string> = {
-  attention: "border-amber-500/40 text-amber-700 dark:text-amber-400",
-}
 
 export function RunStatusBadge({ status }: { status: string }) {
   const tone = runStatusTone(status)
@@ -22,10 +17,12 @@ export function RunStatusBadge({ status }: { status: string }) {
         tone === "error"
           ? "destructive"
           : tone === "attention"
-            ? "outline"
-            : "secondary"
+            ? "warning"
+            : tone === "ok"
+              ? "success"
+              : "secondary"
       }
-      className={cn("font-normal", TONE_CLASS[tone])}
+      className="font-normal"
     >
       {runStatusLabel(status)}
     </Badge>

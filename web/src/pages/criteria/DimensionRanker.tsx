@@ -82,7 +82,7 @@ export function DimensionRanker({ value, onChange }: DimensionRankerProps) {
         </p>
       </div>
 
-      <ol className="grid gap-1.5" data-testid="dimension-ranker">
+      <ol className="grid gap-2" data-testid="dimension-ranker">
         {value.map((key, index) => (
           <li
             key={key}
@@ -97,8 +97,8 @@ export function DimensionRanker({ value, onChange }: DimensionRankerProps) {
             }}
             onDragEnd={() => setDragIndex(null)}
             className={cn(
-              "flex cursor-grab items-center gap-2 rounded-lg border border-input bg-background px-3 py-2",
-              dragIndex === index && "opacity-60"
+              "flex cursor-grab items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5 shadow-xs transition-colors hover:border-foreground/20",
+              dragIndex === index && "opacity-60 ring-2 ring-ring/40"
             )}
           >
             <GripVerticalIcon

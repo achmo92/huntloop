@@ -14,7 +14,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { cn } from "@/lib/utils"
 
 /**
  * D-16 / UI-05: one click runs all three checks at once; each card resolves the
@@ -125,7 +124,8 @@ export function DiagnosticsPanel() {
             <div
               key={check.key}
               data-testid={`diag-${check.key}`}
-              className="rounded-lg border border-border/60 px-3 py-2.5"
+              data-phase={state.phase}
+              className="rounded-xl border border-border/70 bg-muted/25 px-3.5 py-3 transition-colors data-[phase=running]:border-ring/40"
             >
               <div className="flex items-center justify-between gap-2">
                 <div>
@@ -144,14 +144,11 @@ export function DiagnosticsPanel() {
                   </span>
                 ) : state.phase === "done" ? (
                   state.result?.status === "fail" || state.error ? (
-                    <Badge
-                      variant="outline"
-                      className="border-destructive/40 font-normal text-destructive"
-                    >
+                    <Badge variant="destructive" className="font-normal">
                       <XCircleIcon /> Fail
                     </Badge>
                   ) : (
-                    <Badge variant="secondary" className="font-normal">
+                    <Badge variant="success" className="font-normal">
                       <CheckCircle2Icon /> Pass
                     </Badge>
                   )
@@ -171,12 +168,7 @@ export function DiagnosticsPanel() {
               {state.phase === "done" &&
               state.result?.status === "fail" &&
               state.result.remedy ? (
-                <p
-                  className={cn(
-                    "mt-1 text-sm font-medium text-amber-700 dark:text-amber-400",
-                    "text-pretty"
-                  )}
-                >
+                <p className="mt-1.5 text-sm font-medium text-warning text-pretty">
                   What to do: {state.result.remedy}
                 </p>
               ) : null}

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { XIcon } from "lucide-react"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -113,7 +114,7 @@ export function FilterBar({ value, onChange, onClear }: FilterBarProps) {
   }
 
   return (
-    <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+    <div className="flex flex-wrap items-end gap-x-5 gap-y-3 rounded-xl border border-border/80 bg-card p-4 shadow-xs">
       <div className="flex flex-col gap-1.5">
         <span className="text-xs font-medium text-muted-foreground">Status</span>
         <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by status">
@@ -126,10 +127,10 @@ export function FilterBar({ value, onChange, onClear }: FilterBarProps) {
                 aria-pressed={on}
                 onClick={() => toggleStatus(stage)}
                 className={cn(
-                  "rounded-4xl border px-2 py-0.5 text-xs font-medium transition-colors",
+                  "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                   on
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                    ? "border-primary/30 bg-primary text-primary-foreground"
+                    : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:text-foreground"
                 )}
               >
                 {STATUS_LABELS[stage]}
@@ -227,8 +228,9 @@ export function FilterBar({ value, onChange, onClear }: FilterBarProps) {
         <button
           type="button"
           onClick={onClear}
-          className="pb-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          className="ml-auto inline-flex items-center gap-1.5 self-end rounded-lg px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
+          <XIcon aria-hidden="true" className="size-3.5" />
           Clear filters
         </button>
       ) : null}

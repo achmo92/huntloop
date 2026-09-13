@@ -76,13 +76,13 @@ export function SuggestField({
         <ul className="flex flex-wrap gap-1.5">
           {values.map((entry) => (
             <li key={entry}>
-              <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-secondary px-2 py-1 text-sm">
                 {entry}
                 <button
                   type="button"
                   onClick={() => remove(entry)}
                   aria-label={`Remove ${entry}`}
-                  className="text-muted-foreground transition-colors hover:text-foreground"
+                  className="rounded-sm text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
                 >
                   <XIcon className="size-3" />
                 </button>
@@ -110,7 +110,7 @@ export function SuggestField({
         <div
           role="listbox"
           aria-label="Employer suggestions"
-          className="max-h-48 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-md"
+          className="max-h-48 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
         >
           {matches.map((name) => (
             <button
@@ -120,7 +120,7 @@ export function SuggestField({
               aria-selected={false}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => commit(name)}
-              className="w-full rounded-md px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+              className="w-full rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
             >
               {name}
             </button>

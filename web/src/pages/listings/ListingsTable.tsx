@@ -168,8 +168,10 @@ export function ListingsTable({
         header: "Title",
         meta: { sortKey: "title" } satisfies SortableMeta,
         cell: ({ row }) => (
-          <div className="flex min-w-52 flex-col">
-            <span className="font-medium">{row.original.title}</span>
+          <div className="flex min-w-52 flex-col gap-0.5">
+            <span className="font-medium text-foreground">
+              {row.original.title}
+            </span>
             <span className="text-xs text-muted-foreground">
               {row.original.company_name}
             </span>
@@ -204,7 +206,7 @@ export function ListingsTable({
         cell: ({ row }) => (
           <span
             data-testid="score-value"
-            className="block text-right tabular-nums"
+            className="block text-right font-heading text-sm font-semibold tabular-nums"
           >
             {row.original.score_overall === null
               ? ""
@@ -282,7 +284,7 @@ export function ListingsTable({
                       <button
                         type="button"
                         onClick={() => toggleSort(sortKey)}
-                        className="inline-flex items-center gap-1 font-medium hover:text-foreground"
+                        className="-mx-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                       >
                         {flexRender(
                           header.column.columnDef.header,
@@ -322,7 +324,7 @@ export function ListingsTable({
               }}
               className={
                 activeId === row.original.id
-                  ? "cursor-pointer bg-muted/50"
+                  ? "cursor-pointer bg-accent/60"
                   : "cursor-pointer"
               }
             >
@@ -336,8 +338,8 @@ export function ListingsTable({
         </TableBody>
       </Table>
 
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+        <span className="tabular-nums">
           {total} {total === 1 ? "listing" : "listings"}
         </span>
         <div className="flex items-center gap-2">
@@ -350,7 +352,7 @@ export function ListingsTable({
           >
             Previous
           </Button>
-          <span>
+          <span className="tabular-nums">
             Page {page} of {pageCount}
           </span>
           <Button

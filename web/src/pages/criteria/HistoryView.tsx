@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { DiffIcon } from "lucide-react"
 import { api } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import type { CriteriaVersionWire } from "./types"
@@ -111,7 +113,12 @@ export function HistoryView() {
         {[...versions].reverse().map((version) => (
           <li
             key={version.version}
-            className="flex items-center gap-3 rounded-lg border border-border p-3"
+            className={cn(
+              "flex items-center gap-3 rounded-xl border p-3 shadow-xs transition-colors",
+              selected.includes(version.version)
+                ? "border-primary/40 bg-primary/5"
+                : "border-border bg-card hover:border-foreground/20"
+            )}
           >
             <Checkbox
               aria-label={`Version ${version.version}`}
@@ -119,7 +126,9 @@ export function HistoryView() {
               onCheckedChange={() => toggle(version.version)}
             />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">v{version.version}</p>
+              <p className="text-sm font-medium tabular-nums">
+                v{version.version}
+              </p>
               <p className="text-sm text-muted-foreground">
                 {formatDate(version.created_at)}
                 {version.source ? ` · ${version.source}` : ""}
@@ -145,16 +154,33 @@ export function HistoryView() {
               {entries.map((entry) => (
                 <li
                   key={`${entry.kind}:${entry.path}`}
-                  className="grid gap-1 rounded-lg bg-muted/50 p-2.5 text-sm"
+                  className="grid gap-1 rounded-lg border border-border/60 bg-muted/40 p-2.5 text-sm"
                 >
-                  <span className="font-medium">{entry.path}</span>
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <DiffIcon
+                      aria-hidden="true"
+                      className="size-3.5 text-muted-foreground"
+                    />
+                    {entry.path}
+                  </span>
                   <span className="flex flex-wrap items-center gap-2 text-muted-foreground">
-                    <span className="line-through">{formatValue(entry.before)}</span>
+                    <span className="line-through">
+                      {formatValue(entry.before)}
+                    </span>
                     <span aria-hidden="true">→</span>
                     <span className="text-foreground">
                       {formatValue(entry.after)}
                     </span>
-                    <Badge variant="outline" className="font-normal">
+                    <Badge
+                      variant={
+                        entry.kind === "added"
+                          ? "success"
+                          : entry.kind === "removed"
+                            ? "destructive"
+                            : "warning"
+                      }
+                      className="font-normal"
+                    >
                       {entry.kind}
                     </Badge>
                   </span>

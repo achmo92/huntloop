@@ -106,10 +106,10 @@ export function EmployerProposalsStep({ onDone }: EmployerProposalsStepProps) {
   return (
     <section className="grid gap-5">
       <div>
-        <h2 className="font-heading text-lg font-medium">
+        <h2 className="font-heading text-lg font-semibold tracking-tight">
           Employers to watch
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
           Based on your criteria, here's who we'd watch. Uncheck anyone you
           don't want — nothing is added until you say so.
         </p>
@@ -140,7 +140,7 @@ export function EmployerProposalsStep({ onDone }: EmployerProposalsStepProps) {
               {candidates.map((candidate) => (
                 <li
                   key={candidate.name}
-                  className="flex items-start gap-3 rounded-lg border border-border p-3"
+                  className="flex items-start gap-3 rounded-xl border border-border bg-card p-3 shadow-xs transition-colors hover:border-foreground/20"
                 >
                   <Checkbox
                     className="mt-0.5"
@@ -193,7 +193,7 @@ export function EmployerProposalsStep({ onDone }: EmployerProposalsStepProps) {
               return (
                 <li
                   key={company.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3 shadow-xs"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{company.name}</p>
@@ -204,7 +204,7 @@ export function EmployerProposalsStep({ onDone }: EmployerProposalsStepProps) {
                     ) : null}
                   </div>
                   <Badge
-                    variant={status.resolved ? "secondary" : "outline"}
+                    variant={status.resolved ? "success" : "warning"}
                     className="font-normal"
                   >
                     {status.resolved ? "Watching" : "Finding job board…"}

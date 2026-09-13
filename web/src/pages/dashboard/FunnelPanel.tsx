@@ -38,7 +38,7 @@ export function FunnelPanel({ funnel }: { funnel: Funnel }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <dl className="grid gap-2.5">
+        <dl className="grid gap-3">
           {STAGES.map(({ key, label }) => {
             const value = funnel[key]
             const width = `${Math.round((value / peak) * 100)}%`
@@ -47,20 +47,24 @@ export function FunnelPanel({ funnel }: { funnel: Funnel }) {
                 key={key}
                 data-testid="funnel-stage"
                 data-stage={key}
-                className="grid grid-cols-[10.5rem_1fr_3rem] items-center gap-3"
+                className="grid grid-cols-[minmax(7rem,11rem)_1fr_3.5rem] items-center gap-3"
               >
-                <dt className="text-sm text-muted-foreground">{label}</dt>
+                <dt className="truncate text-sm text-muted-foreground">
+                  {label}
+                </dt>
                 <div
-                  className="h-2 overflow-hidden rounded-full bg-muted"
+                  className="h-2.5 overflow-hidden rounded-full bg-muted ring-1 ring-inset ring-border/60"
                   role="img"
                   aria-label={`${label}: ${value}`}
                 >
                   <div
-                    className="h-full rounded-full bg-primary/70"
+                    className="h-full rounded-full bg-primary/75"
                     style={{ width }}
                   />
                 </div>
-                <dd className="text-right text-sm tabular-nums">{value}</dd>
+                <dd className="text-right font-heading text-sm font-medium tabular-nums">
+                  {value}
+                </dd>
               </div>
             )
           })}

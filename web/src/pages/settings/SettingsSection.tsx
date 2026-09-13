@@ -5,6 +5,7 @@ import {
   type FieldValues,
   type UseFormReturn,
 } from "react-hook-form"
+import { CheckIcon } from "lucide-react"
 import { ApiError } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
@@ -75,14 +76,14 @@ export function SettingsSection<T extends FieldValues>({
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
-          {children(form)}
+        <CardContent className="grid gap-5">
+          <div className="grid gap-4">{children(form)}</div>
           {error ? (
             <p role="alert" className="text-sm text-destructive text-pretty">
               {error}
             </p>
           ) : null}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 border-t border-border/70 pt-4">
             <Button
               type="submit"
               disabled={!form.formState.isDirty || saving}
@@ -93,7 +94,11 @@ export function SettingsSection<T extends FieldValues>({
               <span className="text-xs text-muted-foreground">{note}</span>
             ) : null}
             {saved && !form.formState.isDirty ? (
-              <span role="status" className="text-sm text-muted-foreground">
+              <span
+                role="status"
+                className="inline-flex items-center gap-1 text-sm font-medium text-success"
+              >
+                <CheckIcon aria-hidden="true" className="size-3.5" />
                 Saved
               </span>
             ) : null}

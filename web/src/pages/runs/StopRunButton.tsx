@@ -38,7 +38,10 @@ export function StopRunButton({ runId, className }: StopRunButtonProps) {
         event.stopPropagation()
         mutation.mutate()
       }}
-      className={cn(className)}
+      className={cn(
+        "text-destructive hover:bg-destructive/10 hover:text-destructive",
+        className
+      )}
     >
       <CircleStop aria-hidden="true" />
       {mutation.isPending ? "Stopping…" : "Stop"}

@@ -419,13 +419,13 @@ function ChipField({
         <ul className="flex flex-wrap gap-1.5">
           {values.map((entry) => (
             <li key={entry}>
-              <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-secondary px-2 py-1 text-sm">
                 {entry}
                 <button
                   type="button"
                   onClick={() => remove(entry)}
                   aria-label={`Remove ${entry}`}
-                  className="text-muted-foreground transition-colors hover:text-foreground"
+                  className="rounded-sm text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
                 >
                   <XIcon className="size-3" />
                 </button>
@@ -528,13 +528,13 @@ function PickerField({
         <ul className="flex flex-wrap gap-1.5">
           {values.map((entry) => (
             <li key={entry}>
-              <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-secondary px-2 py-1 text-sm">
                 {entry}
                 <button
                   type="button"
                   onClick={() => remove(entry)}
                   aria-label={`Remove ${entry}`}
-                  className="text-muted-foreground transition-colors hover:text-foreground"
+                  className="rounded-sm text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
                 >
                   <XIcon className="size-3" />
                 </button>
@@ -612,7 +612,7 @@ export function CriteriaForm({
                   {...field}
                   rows={3}
                   placeholder="Role, level, places, salary, what to avoid…"
-                  className="w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed outline-none transition-colors placeholder:text-muted-foreground/70 hover:border-foreground/20 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 />
               </FormControl>
               <FormDescription>
@@ -623,8 +623,8 @@ export function CriteriaForm({
           )}
         />
 
-        <fieldset className="grid gap-4 rounded-xl border border-border p-4">
-          <legend className="px-1 font-heading text-base font-medium">
+        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+          <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Locations
           </legend>
           <FormField
@@ -682,8 +682,8 @@ export function CriteriaForm({
           />
         </fieldset>
 
-        <fieldset className="grid gap-4 rounded-xl border border-border p-4">
-          <legend className="px-1 font-heading text-base font-medium">
+        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+          <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Level and timing
           </legend>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -772,8 +772,8 @@ export function CriteriaForm({
           />
         </fieldset>
 
-        <fieldset className="grid gap-4 rounded-xl border border-border p-4">
-          <legend className="px-1 font-heading text-base font-medium">
+        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+          <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Compensation floor
           </legend>
           <div className="grid gap-4 sm:grid-cols-3">
@@ -873,8 +873,8 @@ export function CriteriaForm({
           </div>
         </fieldset>
 
-        <fieldset className="grid gap-4 rounded-xl border border-border p-4">
-          <legend className="px-1 font-heading text-base font-medium">
+        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+          <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Exclusions
           </legend>
           <FormField
@@ -913,8 +913,8 @@ export function CriteriaForm({
           />
         </fieldset>
 
-        <fieldset className="grid gap-4 rounded-xl border border-border p-4">
-          <legend className="px-1 font-heading text-base font-medium">
+        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+          <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Work authorization
           </legend>
           <FormField
@@ -953,8 +953,8 @@ export function CriteriaForm({
           />
         </fieldset>
 
-        <fieldset className="grid gap-4 rounded-xl border border-border p-4">
-          <legend className="px-1 font-heading text-base font-medium">
+        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+          <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             What matters most
           </legend>
           <DimensionRanker

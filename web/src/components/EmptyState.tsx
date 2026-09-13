@@ -19,15 +19,15 @@ export function EmptyState({
   onAction,
 }: EmptyStateProps) {
   return (
-    <div className="mx-auto flex max-w-md flex-col items-center gap-3 py-16 text-center">
-      <h2 className="font-heading text-xl font-medium tracking-tight text-balance">
+    <div className="mx-auto flex max-w-md flex-col items-center gap-2.5 py-20 text-center">
+      <h2 className="font-heading text-xl font-semibold tracking-tight text-balance">
         {title}
       </h2>
-      <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
+      <p className="max-w-sm text-sm leading-relaxed text-muted-foreground text-pretty">
         {description}
       </p>
       {actionLabel ? (
-        <Button className="mt-2" onClick={onAction}>
+        <Button className="mt-3" onClick={onAction}>
           {actionLabel}
         </Button>
       ) : null}

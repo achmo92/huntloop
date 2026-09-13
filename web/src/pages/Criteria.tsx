@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { HistoryIcon } from "lucide-react"
+import { CheckCircle2Icon, HistoryIcon } from "lucide-react"
 import { api, apiPost } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
@@ -81,15 +81,15 @@ export default function Criteria() {
   }
 
   return (
-    <div className="mx-auto grid max-w-3xl gap-8">
+    <div className="mx-auto grid max-w-3xl gap-7">
       <header className="grid gap-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="font-heading text-2xl font-semibold tracking-tight">
+            <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
               {inSetup ? "Set up your search" : "Your criteria"}
             </h1>
             {!inSetup && current ? (
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-1.5 text-sm text-muted-foreground tabular-nums">
                 v{current.version} of {total}
               </p>
             ) : null}
@@ -117,9 +117,9 @@ export default function Criteria() {
                   <span
                     className={
                       state === "current"
-                        ? "flex size-6 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground"
+                        ? "flex size-6 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground shadow-xs"
                         : state === "done"
-                          ? "flex size-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground"
+                          ? "flex size-6 items-center justify-center rounded-full bg-primary/12 text-xs font-medium text-primary"
                           : "flex size-6 items-center justify-center rounded-full border border-border text-xs text-muted-foreground"
                     }
                   >
@@ -129,15 +129,16 @@ export default function Criteria() {
                     className={
                       state === "upcoming"
                         ? "text-muted-foreground"
-                        : "text-foreground"
+                        : "font-medium text-foreground"
                     }
                   >
                     {label}
                   </span>
                   {index < STEP_LABELS.length - 1 ? (
-                    <span aria-hidden="true" className="text-border">
-                      /
-                    </span>
+                    <span
+                      aria-hidden="true"
+                      className="h-px w-6 bg-border"
+                    />
                   ) : null}
                 </li>
               )
@@ -149,8 +150,12 @@ export default function Criteria() {
       {savedVersion !== null ? (
         <p
           role="status"
-          className="rounded-lg bg-muted px-3 py-2 text-sm text-foreground"
+          className="flex items-start gap-2 rounded-xl border border-success/30 bg-success/10 px-3.5 py-2.5 text-sm text-foreground"
         >
+          <CheckCircle2Icon
+            aria-hidden="true"
+            className="mt-0.5 size-4 shrink-0 text-success"
+          />
           Saved as version {savedVersion}. You can edit it any time — each save
           adds a new version.
         </p>

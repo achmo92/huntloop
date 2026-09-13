@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
+import { ArrowRightIcon, CalendarClockIcon } from "lucide-react"
 import { api } from "@/lib/api"
 import { EmptyState } from "@/components/EmptyState"
 import { Badge } from "@/components/ui/badge"
@@ -115,13 +116,13 @@ export default function Dashboard() {
 
   return (
     <div className="grid gap-6">
-      <header className="grid gap-3">
+      <header className="grid gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="font-heading text-2xl font-semibold tracking-tight">
+            <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
               Dashboard
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
               What happened, what's next, and where things stand.
             </p>
           </div>
@@ -135,9 +136,13 @@ export default function Dashboard() {
             <Link
               key={item.to}
               to={item.to}
-              className="rounded-lg border border-border px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="group inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1 text-sm text-muted-foreground shadow-xs transition-colors hover:border-foreground/20 hover:text-foreground"
             >
               {item.label}
+              <ArrowRightIcon
+                aria-hidden="true"
+                className="size-3.5 -translate-x-0.5 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100"
+              />
             </Link>
           ))}
         </nav>
@@ -152,7 +157,11 @@ export default function Dashboard() {
         />
       ) : (
         <>
-          <p className="text-sm text-muted-foreground">
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <CalendarClockIcon
+              aria-hidden="true"
+              className="size-4 text-muted-foreground/70"
+            />
             {nextRun
               ? `Next run: ${nextRun}`
               : "No schedule set — configure it in Settings"}
@@ -162,7 +171,7 @@ export default function Dashboard() {
             <CardHeader className="flex-row items-start justify-between gap-3">
               <div>
                 <CardTitle>Last run</CardTitle>
-                <CardDescription>
+                <CardDescription className="mt-0.5 tabular-nums">
                   {dashboard.last_run
                     ? formatDateTime(dashboard.last_run.started_at)
                     : "No runs yet"}
@@ -176,31 +185,32 @@ export default function Dashboard() {
                       ? "destructive"
                       : "secondary"
                   }
+                  className="font-normal"
                 >
                   {runStatusLabel(dashboard.last_run.status)}
                 </Badge>
               ) : null}
             </CardHeader>
-            <CardContent className="grid gap-2">
+            <CardContent className="grid gap-2.5">
               {dashboard.last_run ? (
                 <>
-                  <p className="text-sm">
+                  <p className="text-sm tabular-nums">
                     {dashboard.last_run.companies_checked} employers ·{" "}
                     {dashboard.last_run.listings_fetched} fetched ·{" "}
                     {dashboard.last_run.scored} scored ·{" "}
                     {dashboard.last_run.new_jobs_written} written
                   </p>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-sm font-medium tabular-nums">
                     Cost {formatCost(dashboard.last_run.cost_usd)}
                   </p>
                   {dashboard.last_run.error_summary ? (
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-muted-foreground text-pretty">
                       {dashboard.last_run.error_summary}
                     </p>
                   ) : null}
                   <Link
                     to="/runs"
-                    className="w-fit text-sm font-medium text-foreground underline-offset-4 hover:underline"
+                    className="w-fit text-sm font-medium text-primary underline-offset-4 hover:underline"
                   >
                     View run history
                   </Link>
@@ -224,18 +234,18 @@ export default function Dashboard() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-3">
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-7">
                 {JOB_STATUSES.map((status) => (
                   <div
                     key={status}
-                    className="rounded-lg border border-border/60 px-3 py-2"
+                    className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2"
                   >
-                    <div className="text-xs text-muted-foreground">
+                    <div className="truncate text-xs text-muted-foreground">
                       {STATUS_LABELS[status]}
                     </div>
                     <div
                       data-testid="listing-status-count"
-                      className="font-heading text-lg font-medium tabular-nums"
+                      className="mt-0.5 font-heading text-xl font-semibold tabular-nums"
                     >
                       {dashboard.listings_by_status[status] ?? 0}
                     </div>

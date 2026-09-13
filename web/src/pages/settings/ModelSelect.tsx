@@ -63,7 +63,7 @@ export function ModelSelect({
         />
         <button
           type="button"
-          className="w-fit text-xs text-muted-foreground underline-offset-2 hover:underline"
+          className="w-fit rounded-sm text-xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           onClick={() => setCustomMode(false)}
         >
           Choose from the list instead
@@ -99,7 +99,7 @@ export function ModelSelect({
         </SelectContent>
       </Select>
       {fallback ? (
-        <p className="text-xs text-muted-foreground">{FALLBACK_HINT}</p>
+        <p className="text-xs text-warning text-pretty">{FALLBACK_HINT}</p>
       ) : null}
     </div>
   )

@@ -66,7 +66,7 @@ function FieldLabel({
   children: string
 }) {
   return (
-    <label htmlFor={htmlFor} className="text-sm font-medium">
+    <label htmlFor={htmlFor} className="text-sm font-medium text-foreground">
       {children}
     </label>
   )
@@ -183,10 +183,10 @@ export default function Settings() {
   return (
     <div className="grid gap-6">
       <header>
-        <h1 className="font-heading text-2xl font-semibold tracking-tight">
+        <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
           Settings
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
           Everything the pipeline needs — no file editing required.
         </p>
       </header>

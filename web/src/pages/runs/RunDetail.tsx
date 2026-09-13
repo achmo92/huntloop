@@ -95,28 +95,34 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
               </div>
 
               <section className="grid gap-2">
-                <h3 className="font-heading text-sm font-medium">Timing & cost</h3>
-                <dl className="grid grid-cols-[10rem_1fr] gap-y-1 text-sm">
+                <h3 className="font-heading text-sm font-semibold tracking-tight">Timing & cost</h3>
+                <dl className="grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1.5 text-sm">
                   <dt className="text-muted-foreground">Started</dt>
-                  <dd>{formatDateTime(detail.started_at)}</dd>
+                  <dd className="tabular-nums">
+                    {formatDateTime(detail.started_at)}
+                  </dd>
                   <dt className="text-muted-foreground">Finished</dt>
-                  <dd>{formatDateTime(detail.finished_at)}</dd>
+                  <dd className="tabular-nums">
+                    {formatDateTime(detail.finished_at)}
+                  </dd>
                   <dt className="text-muted-foreground">Duration</dt>
-                  <dd data-testid="run-duration">
+                  <dd data-testid="run-duration" className="tabular-nums">
                     {formatDuration(detail.started_at, detail.finished_at)}
                   </dd>
                   <dt className="text-muted-foreground">Cost</dt>
-                  <dd>{formatCost(detail.cost_usd)}</dd>
+                  <dd className="font-medium tabular-nums">
+                    {formatCost(detail.cost_usd)}
+                  </dd>
                   <dt className="text-muted-foreground">Tokens in / out</dt>
-                  <dd>
+                  <dd className="tabular-nums">
                     {detail.tokens_in} / {detail.tokens_out}
                   </dd>
                 </dl>
               </section>
 
               <section className="grid gap-2">
-                <h3 className="font-heading text-sm font-medium">Funnel</h3>
-                <dl className="grid grid-cols-[10rem_1fr] gap-y-1 text-sm">
+                <h3 className="font-heading text-sm font-semibold tracking-tight">Funnel</h3>
+                <dl className="grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1.5 text-sm">
                   {COUNTERS.map(({ key, label }) => (
                     <div key={key} className="contents">
                       <dt className="text-muted-foreground">{label}</dt>
@@ -128,7 +134,7 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
 
               {detail.error_summary ? (
                 <section className="grid gap-1">
-                  <h3 className="font-heading text-sm font-medium">Summary</h3>
+                  <h3 className="font-heading text-sm font-semibold tracking-tight">Summary</h3>
                   <p className="text-sm text-muted-foreground text-pretty">
                     {detail.error_summary}
                   </p>
@@ -136,7 +142,7 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
               ) : null}
 
               <section className="grid gap-2">
-                <h3 className="font-heading text-sm font-medium">
+                <h3 className="font-heading text-sm font-semibold tracking-tight">
                   Failures ({detail.errors.length})
                 </h3>
                 {detail.errors.length === 0 ? (
@@ -149,7 +155,7 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
                       <li
                         key={`${error.company_name}-${error.stage}-${index}`}
                         data-testid="run-error"
-                        className="rounded-lg border border-border/60 px-3 py-2 text-sm"
+                        className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2 text-sm"
                       >
                         <span className="font-medium">
                           {error.company_name ?? "Unknown employer"}

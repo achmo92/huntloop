@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
+import { cn } from "@/lib/utils"
 import { apiPatch } from "@/lib/api"
 import {
   Select,
@@ -105,7 +106,7 @@ export function StatusSelect({
         <SelectTrigger
           size="sm"
           aria-label="Pipeline stage"
-          className={className}
+          className={cn("min-w-32 justify-between", className)}
         >
           <SelectValue />
         </SelectTrigger>
