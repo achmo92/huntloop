@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from huntloop.api.routers import settings
 from huntloop.config import load_config
 from huntloop.credentials.store import CredentialStore
 from huntloop.db.models import Setting
@@ -144,3 +145,160 @@ def test_sections_are_independently_saveable(client, make_session):
         assert repo.get_value("run_spend_cap_usd") is None
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# GAP-5: GET /api/settings/models — provider list via the stored key, or a
+# typed fallback that still reflects the saved models. Never 5xxs; never
+# leaks the key (OPS-06-safe).
+# ---------------------------------------------------------------------------
+
+
+class _FakeModelsResponse:
+    def __init__(self, status_code: int, payload: dict) -> None:
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeModelsClient:
+    """Stands in for `httpx.Client` so the real helper seam is exercised."""
+
+    captured: dict = {}
+    status_code = 200
+    payload: dict = {"data": []}
+
+    def __init__(self, *args, **kwargs) -> None:
+        _FakeModelsClient.captured["init_kwargs"] = kwargs
+
+    def __enter__(self) -> "_FakeModelsClient":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+    def get(self, url: str, headers: dict | None = None) -> _FakeModelsResponse:
+        _FakeModelsClient.captured["url"] = url
+        _FakeModelsClient.captured["headers"] = headers
+        return _FakeModelsResponse(_FakeModelsClient.status_code, _FakeModelsClient.payload)
+
+
+def _patch_provider(monkeypatch, result):
+    # raising=False: the seam is created by the implementation; before GREEN the
+    # target test must fail on the endpoint's own assertion, not an AttributeError.
+    monkeypatch.setattr(settings, "_fetch_provider_models", lambda *a, **k: result, raising=False)
+
+
+def _store_key(client, key: str = "sk-test") -> None:
+    assert client.put("/api/settings/api-access", json={"api_key": key}).status_code == 200
+
+
+def test_fetch_provider_models_sends_bearer_to_models_path(monkeypatch):
+    _FakeModelsClient.captured = {}
+    _FakeModelsClient.status_code = 200
+    _FakeModelsClient.payload = {"data": [{"id": "m-b"}, {"id": "m-a"}, {"id": "m-a"}]}
+    monkeypatch.setattr(settings.httpx, "Client", _FakeModelsClient)
+
+    assert settings._fetch_provider_models("https://llm.example/v1/", "sk-secret") == [
+        "m-a",
+        "m-b",
+    ]
+    assert _FakeModelsClient.captured["url"] == "https://llm.example/v1/models"
+    assert _FakeModelsClient.captured["headers"] == {"Authorization": "Bearer sk-secret"}
+
+
+def test_fetch_provider_models_returns_none_on_error_status(monkeypatch):
+    _FakeModelsClient.captured = {}
+    _FakeModelsClient.status_code = 401
+    _FakeModelsClient.payload = {"error": "unauthorized"}
+    monkeypatch.setattr(settings.httpx, "Client", _FakeModelsClient)
+
+    assert settings._fetch_provider_models("https://llm.example/v1", "bad") is None
+
+
+def test_available_models_returns_sorted_provider_list(client, monkeypatch):
+    _store_key(client)
+    _patch_provider(monkeypatch, ["m-b", "m-a", "m-a"])
+
+    resp = client.get("/api/settings/models")
+    assert resp.status_code == 200
+    assert resp.json() == {"models": ["m-a", "m-b"], "source": "provider"}
+
+
+def test_available_models_provider_failure_is_a_200_fallback(client, monkeypatch):
+    _store_key(client)
+    _patch_provider(monkeypatch, None)
+
+    resp = client.get("/api/settings/models")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "fallback"
+    assert set(settings.FALLBACK_MODELS) <= set(body["models"])
+
+
+def test_available_models_provider_raising_is_still_a_200_fallback(client, monkeypatch):
+    _store_key(client)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(settings, "_fetch_provider_models", _boom, raising=False)
+
+    resp = client.get("/api/settings/models")
+    assert resp.status_code == 200
+    assert resp.json()["source"] == "fallback"
+
+
+def test_available_models_without_a_key_goes_straight_to_fallback(client, monkeypatch):
+    called = {"count": 0}
+
+    def _should_not_run(*_args, **_kwargs):
+        called["count"] += 1
+        return ["m-a"]
+
+    monkeypatch.setattr(settings, "_fetch_provider_models", _should_not_run)
+
+    resp = client.get("/api/settings/models")
+    assert resp.status_code == 200
+    assert resp.json()["source"] == "fallback"
+    assert called["count"] == 0
+
+
+def test_available_models_fallback_includes_the_saved_models(client, make_session, monkeypatch):
+    _patch_provider(monkeypatch, None)
+    session = make_session()
+    try:
+        repo = SettingsRepository(session)
+        repo.set_value("triage_model", "my-custom-triage-7b")
+        repo.set_value("scoring_model", "my-custom-score-70b")
+        repo.set_value("extraction_model", "my-custom-extract-3b")
+        session.commit()
+    finally:
+        session.close()
+
+    body = client.get("/api/settings/models").json()
+    assert body["source"] == "fallback"
+    saved = {"my-custom-triage-7b", "my-custom-score-70b", "my-custom-extract-3b"}
+    assert saved <= set(body["models"])
+    assert set(settings.FALLBACK_MODELS) <= set(body["models"])
+
+
+def test_available_models_uses_the_stored_key_and_never_returns_it(client, monkeypatch):
+    _store_key(client, "sk-super-secret")
+    captured: dict = {}
+
+    def _capture(base_url: str, api_key: str):
+        captured["base_url"] = base_url
+        captured["api_key"] = api_key
+        return ["m-a"]
+
+    monkeypatch.setattr(settings, "_fetch_provider_models", _capture, raising=False)
+
+    resp = client.get("/api/settings/models")
+    assert resp.status_code == 200
+    assert captured["api_key"] == "sk-super-secret"
+    assert captured["base_url"].startswith("http")
+    # The key never reaches the response body.
+    assert "sk-super-secret" not in resp.text
