@@ -23,6 +23,7 @@ import {
   deriveInFlight,
   useQueuedResolutionRows,
 } from "@/pages/criteria/useResolutionQueue"
+import { SetBoardDialog } from "@/pages/employers/SetBoardDialog"
 
 /**
  * D-07/D-08: the registry is ONE list. Resolution failure is a status column
@@ -87,6 +88,8 @@ export function RegistryTable() {
   // once the row resolves or its last_checked_at changes; then polling stops.
   const [retrying, setRetrying] = useState<Record<string, string | null>>({})
   const [toast, setToast] = useState<string | null>(null)
+  // GAP-14: the employer whose board the user is setting by hand (null = closed).
+  const [boardCompany, setBoardCompany] = useState<CompanyOut | null>(null)
 
   // GAP-9: rows queued by any surface (CoverageCard's bulk retry, the add
   // dialog) — must be read before the query so its interval closure sees them.
@@ -276,21 +279,32 @@ export function RegistryTable() {
                           {company.resolution_detail}
                         </span>
                       ) : null}
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={isRetrying}
-                        aria-label={`Retry resolution for ${company.name}`}
-                        onClick={() => retry(company)}
-                      >
-                        {isRetrying ? (
-                          <Loader2Icon className="animate-spin" />
-                        ) : (
-                          <RefreshCwIcon />
-                        )}
-                        {isRetrying ? "Retrying…" : "Retry resolution"}
-                      </Button>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={isRetrying}
+                          aria-label={`Retry resolution for ${company.name}`}
+                          onClick={() => retry(company)}
+                        >
+                          {isRetrying ? (
+                            <Loader2Icon className="animate-spin" />
+                          ) : (
+                            <RefreshCwIcon />
+                          )}
+                          {isRetrying ? "Retrying…" : "Retry resolution"}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          aria-label={`Set board manually for ${company.name}`}
+                          onClick={() => setBoardCompany(company)}
+                        >
+                          Set board manually
+                        </Button>
+                      </div>
                     </div>
                   ) : isResolving ? (
                     <Badge variant="secondary" className="font-normal">
@@ -355,6 +369,11 @@ export function RegistryTable() {
           {toast}
         </div>
       ) : null}
+
+      <SetBoardDialog
+        company={boardCompany}
+        onClose={() => setBoardCompany(null)}
+      />
     </div>
   )
 }
