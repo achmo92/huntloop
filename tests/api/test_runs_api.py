@@ -215,6 +215,7 @@ def test_trigger_with_run_in_progress_is_409(client, make_session):
 
 def test_stop_running_run_returns_202_and_writes_marker(client, make_session):
     from huntloop.db.repository import SettingsRepository
+    from huntloop.db.run_liveness import stop_requested_at_key
     from huntloop.graph.cancellation import STOP_REQUEST_SETTING_KEY
 
     session = make_session()
@@ -233,8 +234,10 @@ def test_stop_running_run_returns_202_and_writes_marker(client, make_session):
     # process/thread observes it (the request itself never blocks).
     session = make_session()
     try:
-        marker = SettingsRepository(session).get_value(STOP_REQUEST_SETTING_KEY)
-        assert marker == str(run_id)
+        settings = SettingsRepository(session)
+        assert settings.get_value(STOP_REQUEST_SETTING_KEY) == str(run_id)
+        # GAP-16: the stop also carries its requested-at timestamp.
+        assert settings.get_value(stop_requested_at_key(run_id)) is not None
     finally:
         session.close()
 
@@ -364,6 +367,75 @@ def test_stop_stale_run_returns_200_and_finalizes_stopped(client, make_session):
         assert run.error_summary == STOPPED_STALE_REASON
         # No cooperative marker is left behind pretending it will be honored.
         assert SettingsRepository(session).get_value(STOP_REQUEST_SETTING_KEY) is None
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# GAP-16: the durable stop grace-window sweep on read / trigger
+# ---------------------------------------------------------------------------
+
+
+def test_history_finalizes_a_grace_expired_stop(client, make_session):
+    """GET /api/runs sweeps a stop older than the grace window STOPPED (GAP-16)."""
+    from huntloop.db.models import Run, RunStatus
+    from huntloop.db.run_liveness import GRACE_EXPIRED_STOP_REASON
+    from huntloop.graph.cancellation import request_stop
+
+    session = make_session()
+    try:
+        run_id = _seed_running(session)
+        request_stop(session, run_id, now=datetime.now(UTC) - timedelta(seconds=300))
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.get("/api/runs")
+    assert resp.status_code == 200
+    row = next(r for r in resp.json() if r["id"] == str(run_id))
+    assert row["status"] == "stopped"
+    assert row["error_summary"] == GRACE_EXPIRED_STOP_REASON
+
+    # The persisted row is terminal, not merely reshaped in the response.
+    session = make_session()
+    try:
+        persisted = session.get(Run, run_id)
+        assert persisted.status is RunStatus.STOPPED
+        assert persisted.finished_at is not None
+    finally:
+        session.close()
+
+
+def test_trigger_after_grace_expired_stop_returns_202(client, make_session, monkeypatch):
+    """A grace-expired stop is swept before the overlap check, so it never 409s."""
+    from huntloop.api.routers import runs as runs_router
+    from huntloop.db.models import Run, RunStatus
+    from huntloop.graph.cancellation import request_stop
+
+    session = make_session()
+    try:
+        run_id = _seed_running(session)
+        request_stop(session, run_id, now=datetime.now(UTC) - timedelta(seconds=300))
+        session.commit()
+    finally:
+        session.close()
+
+    done = threading.Event()
+
+    def _fake_run_discovery(*, sessionmaker, trigger):
+        done.set()
+        return object()
+
+    monkeypatch.setattr(runs_router, "run_discovery", _fake_run_discovery)
+
+    resp = client.post("/api/runs")
+    assert resp.status_code == 202
+    assert resp.json() == {"status": "accepted"}
+    assert done.wait(timeout=5.0), "background discovery never executed"
+
+    session = make_session()
+    try:
+        assert session.get(Run, run_id).status is RunStatus.STOPPED
     finally:
         session.close()
 

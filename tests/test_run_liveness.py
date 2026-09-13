@@ -15,6 +15,7 @@ precedent).
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep
 
@@ -258,5 +259,209 @@ def test_heartbeat_thread_refreshes_lease_until_stopped(sessionmaker):
     session = sessionmaker()
     try:
         assert SettingsRepository(session).get_value(lease_key(run_id)) is not None
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# GAP-16: the stop grace window (config, timestamped marker, durable sweep)
+# ---------------------------------------------------------------------------
+
+
+def test_run_stop_grace_seconds_defaults_to_60(main_engine):
+    assert load_config().run_stop_grace_seconds == 60
+
+
+def test_run_stop_grace_seconds_is_env_overridable(main_engine, monkeypatch):
+    monkeypatch.setenv("HUNTLOOP_RUN_STOP_GRACE_SECONDS", "5")
+    assert load_config().run_stop_grace_seconds == 5
+
+
+def test_run_stop_grace_seconds_rejects_non_integer(main_engine, monkeypatch):
+    monkeypatch.setenv("HUNTLOOP_RUN_STOP_GRACE_SECONDS", "soon")
+    with pytest.raises(ConfigError):
+        load_config()
+
+
+def test_request_stop_writes_a_timestamp_and_clear_removes_both(sessionmaker):
+    from huntloop.db.models import Setting
+    from huntloop.db.run_liveness import stop_requested_at_key
+    from huntloop.graph.cancellation import (
+        STOP_REQUEST_SETTING_KEY,
+        clear_stop_request,
+        request_stop,
+        stop_requested_at,
+    )
+
+    run_id = uuid.uuid4()
+    now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    session = sessionmaker()
+    try:
+        request_stop(session, run_id, now=now)
+        session.commit()
+    finally:
+        session.close()
+
+    session = sessionmaker()
+    try:
+        assert stop_requested_at(session, run_id) == now
+        clear_stop_request(session, run_id)
+        session.commit()
+        assert session.get(Setting, STOP_REQUEST_SETTING_KEY) is None
+        assert session.get(Setting, stop_requested_at_key(run_id)) is None
+    finally:
+        session.close()
+
+    # The no-arg clear keeps deleting only the marker (GAP-4 unchanged).
+    session = sessionmaker()
+    try:
+        request_stop(session, run_id, now=now)
+        session.commit()
+        clear_stop_request(session)
+        session.commit()
+        assert session.get(Setting, STOP_REQUEST_SETTING_KEY) is None
+        assert session.get(Setting, stop_requested_at_key(run_id)) is not None
+    finally:
+        session.close()
+
+
+def test_finalize_grace_expired_stops_finalizes_expired_stop(sessionmaker):
+    from huntloop.db.models import Setting
+    from huntloop.db.repository import SettingsRepository
+    from huntloop.db.run_liveness import (
+        GRACE_EXPIRED_STOP_REASON,
+        finalize_grace_expired_stops,
+        lease_key,
+        record_run_heartbeat,
+        stop_requested_at_key,
+    )
+    from huntloop.graph.cancellation import STOP_REQUEST_SETTING_KEY, request_stop
+
+    run_id = _seed_run(sessionmaker)
+    now = datetime.now(UTC)
+
+    session = sessionmaker()
+    try:
+        record_run_heartbeat(session, run_id)
+        request_stop(session, run_id, now=now - timedelta(seconds=120))
+        session.commit()
+    finally:
+        session.close()
+
+    session = sessionmaker()
+    try:
+        finalized = finalize_grace_expired_stops(session, now=now, grace_seconds=60)
+        assert finalized == [run_id]
+
+        session.expire_all()
+        run = session.get(Run, run_id)
+        assert run.status is RunStatus.STOPPED
+        assert run.finished_at is not None
+        assert run.error_summary == GRACE_EXPIRED_STOP_REASON
+        # Marker + timestamp + lease are all cleared so the overlap guard releases.
+        assert session.get(Setting, lease_key(run_id)) is None
+        assert session.get(Setting, stop_requested_at_key(run_id)) is None
+        assert SettingsRepository(session).get_value(STOP_REQUEST_SETTING_KEY) is None
+    finally:
+        session.close()
+
+
+def test_finalize_grace_expired_stops_leaves_fresh_stop_untouched(sessionmaker):
+    from huntloop.db.run_liveness import finalize_grace_expired_stops
+    from huntloop.graph.cancellation import request_stop
+
+    run_id = _seed_run(sessionmaker)
+    now = datetime.now(UTC)
+
+    session = sessionmaker()
+    try:
+        request_stop(session, run_id, now=now - timedelta(seconds=10))
+        session.commit()
+    finally:
+        session.close()
+
+    session = sessionmaker()
+    try:
+        assert finalize_grace_expired_stops(session, now=now, grace_seconds=60) == []
+        assert session.get(Run, run_id).status is RunStatus.RUNNING
+    finally:
+        session.close()
+
+
+def test_finalize_grace_expired_stops_ignores_runs_without_a_stop(sessionmaker):
+    from huntloop.db.run_liveness import finalize_grace_expired_stops
+
+    run_id = _seed_run(sessionmaker)
+
+    session = sessionmaker()
+    try:
+        assert (
+            finalize_grace_expired_stops(
+                session, now=datetime.now(UTC), grace_seconds=60
+            )
+            == []
+        )
+        assert session.get(Run, run_id).status is RunStatus.RUNNING
+    finally:
+        session.close()
+
+
+def test_finalize_grace_expired_stops_never_touches_a_terminal_row(sessionmaker):
+    from huntloop.db.run_liveness import finalize_grace_expired_stops
+    from huntloop.graph.cancellation import request_stop
+
+    run_id = _seed_run(sessionmaker, status=RunStatus.SUCCESS)
+    now = datetime.now(UTC)
+
+    session = sessionmaker()
+    try:
+        request_stop(session, run_id, now=now - timedelta(seconds=120))
+        session.commit()
+    finally:
+        session.close()
+
+    session = sessionmaker()
+    try:
+        assert finalize_grace_expired_stops(session, now=now, grace_seconds=60) == []
+        assert session.get(Run, run_id).status is RunStatus.SUCCESS
+    finally:
+        session.close()
+
+
+def test_grace_finalized_run_is_never_overwritten(sessionmaker):
+    from huntloop.db.run_liveness import finalize_grace_expired_stops
+    from huntloop.graph.cancellation import request_stop
+
+    run_id = _seed_run(sessionmaker)
+    now = datetime.now(UTC)
+
+    session = sessionmaker()
+    try:
+        request_stop(session, run_id, now=now - timedelta(seconds=120))
+        session.commit()
+    finally:
+        session.close()
+
+    session = sessionmaker()
+    try:
+        assert finalize_grace_expired_stops(session, now=now, grace_seconds=60) == [run_id]
+        applied = RunRepository(session).finish_if_running(
+            run_id,
+            status=RunStatus.SUCCESS,
+            companies_checked=0,
+            listings_fetched=0,
+            after_dedup=0,
+            after_deterministic=0,
+            after_triage=0,
+            scored=0,
+            new_jobs_written=0,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0,
+        )
+        assert applied is None
+        session.expire_all()
+        assert session.get(Run, run_id).status is RunStatus.STOPPED
     finally:
         session.close()

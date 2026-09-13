@@ -11,8 +11,9 @@ This file owns all six behavior contracts from 04-14-PLAN.md Task 1.
 
 from __future__ import annotations
 
+import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy
@@ -685,5 +686,105 @@ def test_stop_during_second_employer_fetch_writes_no_jobs_for_it(
         assert runs[0].status is RunStatus.STOPPED
         jobs = session.execute(select(Job)).scalars().all()
         assert len(jobs) == 1, "the aborted second employer wrote no jobs"
+    finally:
+        session.close()
+
+
+class _BlockingAdapter:
+    """A fetch that blocks on an Event, modelling a stuck long-running stage."""
+
+    platform = "greenhouse"
+
+    def __init__(self, started: threading.Event, release: threading.Event,
+                 listings: list[RawListing]) -> None:
+        self.started = started
+        self.release = release
+        self.listings = listings
+
+    def fetch(self, slug: str, *, client=None) -> FetchResult:
+        self.started.set()
+        # Bounded block: the test always releases, so this cannot hang forever.
+        self.release.wait(timeout=10)
+        return FetchResult(status=FetchStatus.OK, listings=list(self.listings))
+
+
+def test_grace_window_finalizes_a_stuck_run_without_the_thread(
+    sessionmaker, monkeypatch
+):
+    """GAP-16 deterministic proof: a stop that the stuck thread cannot honor in
+    time is finalized STOPPED by the durable sweep; releasing the stage makes the
+    thread abort at its next checkpoint without overwriting the STOPPED row and
+    without writing any jobs."""
+    import huntloop.graph.nodes as nodes_mod
+    from huntloop.db.models import Setting
+    from huntloop.db.repository import SettingsRepository
+    from huntloop.db.run_liveness import (
+        GRACE_EXPIRED_STOP_REASON,
+        finalize_grace_expired_stops,
+        lease_key,
+        stop_requested_at_key,
+    )
+    from huntloop.graph.cancellation import STOP_REQUEST_SETTING_KEY, request_stop
+
+    seed_criteria(sessionmaker)
+    make_company(sessionmaker, "StuckCo", "stuckco")
+
+    started = threading.Event()
+    release = threading.Event()
+    adapter = _BlockingAdapter(started, release, [make_listing("stuck-1")])
+    monkeypatch.setattr(nodes_mod, "get_adapter", lambda platform: adapter)
+
+    client = _RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+    outcome: dict = {}
+
+    def _run() -> None:
+        outcome["summary"] = run_discovery(
+            sessionmaker=sessionmaker,
+            llm_client=client,
+            http_client=object(),
+            concurrency=1,
+        )
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    try:
+        assert started.wait(timeout=5.0), "the run never reached the blocking fetch"
+
+        now = datetime.now(UTC)
+        session = sessionmaker()
+        try:
+            running = find_run_in_progress(session)
+            assert running is not None
+            run_id = running.id
+            request_stop(session, run_id, now=now - timedelta(seconds=300))
+            session.commit()
+        finally:
+            session.close()
+
+        # The stop is older than the grace window: the sweep finalizes it now,
+        # without waiting for the still-blocked run thread.
+        session = sessionmaker()
+        try:
+            finalized = finalize_grace_expired_stops(session, now=now, grace_seconds=60)
+            assert finalized == [run_id]
+        finally:
+            session.close()
+    finally:
+        release.set()
+        thread.join(timeout=10.0)
+
+    assert not thread.is_alive(), "the run thread did not exit after release"
+    assert outcome["summary"].status == RunStatus.STOPPED.value
+
+    session = sessionmaker()
+    try:
+        run = session.get(Run, run_id)
+        assert run.status is RunStatus.STOPPED
+        assert run.error_summary == GRACE_EXPIRED_STOP_REASON
+        assert session.execute(select(Job)).scalars().all() == []
+        assert find_run_in_progress(session) is None
+        assert session.get(Setting, lease_key(run_id)) is None
+        assert session.get(Setting, stop_requested_at_key(run_id)) is None
+        assert SettingsRepository(session).get_value(STOP_REQUEST_SETTING_KEY) is None
     finally:
         session.close()

@@ -344,3 +344,52 @@ def test_scheduler_reconciles_stale_run_and_proceeds(main_engine, monkeypatch):
         )
     finally:
         session.close()
+
+
+def test_scheduler_finalizes_grace_expired_stop_before_overlap_guard(
+    main_engine, monkeypatch
+):
+    """GAP-16: a stop older than the grace window is swept before the overlap
+    guard, so a run the user stopped never blocks the fire."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    import huntloop.graph.build as graph_build
+    from huntloop.db.run_liveness import GRACE_EXPIRED_STOP_REASON
+    from huntloop.graph.cancellation import request_stop
+
+    factory = make_session_factory(main_engine)
+    now = datetime(2026, 9, 10, 8, 5, 0, tzinfo=UTC)
+
+    session = factory()
+    try:
+        stopped = RunRepository(session).start(RunTrigger.MANUAL)
+        request_stop(session, stopped.id, now=now - timedelta(seconds=300))
+        session.commit()
+        stopped_id = stopped.id
+    finally:
+        session.close()
+
+    calls = {"ran": False}
+
+    def _recording_run_discovery(*, sessionmaker, trigger, **kwargs):
+        calls["ran"] = True
+        return SimpleNamespace(
+            run_id="fake", status="success", new_jobs_written=0, cost_usd=0
+        )
+
+    monkeypatch.setattr(graph_build, "run_discovery", _recording_run_discovery)
+
+    cfg = make_cfg(run_at="08:00", timezone="UTC")
+    execute_scheduled_run(factory, cfg, now=now)
+
+    # The swept run did not block the fire: discovery actually ran.
+    assert calls["ran"] is True
+
+    session = factory()
+    try:
+        run = session.get(Run, stopped_id)
+        assert run.status is RunStatus.STOPPED
+        assert run.error_summary == GRACE_EXPIRED_STOP_REASON
+    finally:
+        session.close()
