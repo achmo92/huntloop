@@ -1,11 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { api, ApiError, apiPost } from "@/lib/api"
 import Employers from "../Employers"
-import { RESOLVE_TIMEOUT_MS } from "./AddEmployerDialog"
 import type { CompanyOut } from "../criteria/types"
 
 vi.mock("@/lib/api", () => {
@@ -48,17 +47,6 @@ const HOOLI_CREATED: CompanyOut = {
   consecutive_empty_runs: 0,
 }
 
-const HOOLI_RESOLVED: CompanyOut = {
-  ...HOOLI_CREATED,
-  ats: "greenhouse",
-  ats_identifier: "hooli",
-  careers_url: null,
-  resolved: true,
-  resolution_status: "resolved",
-  last_job_count: 4,
-  last_checked_at: "2026-09-13T10:00:00Z",
-}
-
 function renderWithProviders(ui: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -77,7 +65,7 @@ async function openDialog(user: ReturnType<typeof userEvent.setup>) {
   return screen.findByRole("dialog")
 }
 
-describe("Add employer dialog (GAP-8)", () => {
+describe("Add employer dialog (GAP-8/GAP-11)", () => {
   beforeEach(() => vi.clearAllMocks())
 
   it("opens a dialog with a name field and an optional careers URL field", async () => {
@@ -90,11 +78,12 @@ describe("Add employer dialog (GAP-8)", () => {
     expect(screen.getByLabelText(/careers url/i)).toBeInTheDocument()
   })
 
-  it("adds then auto-resolves: POST /api/companies then /{id}/resolve, with an in-progress label", async () => {
+  it("creates, queues resolution, and closes the dialog immediately", async () => {
     const user = userEvent.setup()
     mockedApi.mockResolvedValue([])
-    mockedApiPost.mockImplementation(async (path) => {
-      if (path === "/api/companies") return HOOLI_CREATED
+    mockedApiPost.mockImplementation((path) => {
+      if (path === "/api/companies") return Promise.resolve(HOOLI_CREATED)
+      // Resolution is in the background: never awaited by the dialog.
       if (path === "/api/companies/9/resolve") return new Promise(() => {})
       throw new Error(`unexpected POST ${path}`)
     })
@@ -110,30 +99,36 @@ describe("Add employer dialog (GAP-8)", () => {
         careers_url: null,
       })
     )
-    expect(mockedApiPost).toHaveBeenCalledWith(
-      "/api/companies/9/resolve",
-      {}
+    expect(mockedApiPost).toHaveBeenCalledWith("/api/companies/9/resolve", {})
+    // GAP-11: no blocking wait — the dialog closes as soon as the queue fires.
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     )
     expect(
-      await screen.findByText("Finding their job board…")
-    ).toBeInTheDocument()
+      screen.queryByText("Finding their job board…")
+    ).not.toBeInTheDocument()
   })
 
-  it("closes once the poll reports the new employer resolved, and lands it in the registry", async () => {
+  it("lands the new employer in the registry, reading Retrying… while it resolves", async () => {
     const user = userEvent.setup()
     let listings: CompanyOut[] = []
     mockedApi.mockImplementation(async (path) => {
       if (path === "/api/companies") return listings
       if (path === "/api/companies/coverage")
-        return { added: 1, watchable: 1, needs_attention: 0, resolved: 1 }
+        return {
+          added: listings.length,
+          watchable: 0,
+          needs_attention: listings.length,
+          resolved: 0,
+        }
       throw new Error(`unexpected GET ${path}`)
     })
-    mockedApiPost.mockImplementation(async (path) => {
-      if (path === "/api/companies") return HOOLI_CREATED
-      if (path === "/api/companies/9/resolve") {
-        listings = [HOOLI_RESOLVED]
-        return { status: "accepted" }
+    mockedApiPost.mockImplementation((path) => {
+      if (path === "/api/companies") {
+        listings = [HOOLI_CREATED]
+        return Promise.resolve(HOOLI_CREATED)
       }
+      if (path === "/api/companies/9/resolve") return new Promise(() => {})
       throw new Error(`unexpected POST ${path}`)
     })
     renderWithProviders(<Employers />)
@@ -142,10 +137,11 @@ describe("Add employer dialog (GAP-8)", () => {
     await user.type(screen.getByLabelText("Name"), "Hooli")
     await user.click(screen.getByRole("button", { name: "Add" }))
 
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
-    )
     expect(await screen.findByText("Hooli")).toBeInTheDocument()
+    const retry = await screen.findByRole("button", {
+      name: "Retry resolution for Hooli",
+    })
+    expect(retry).toHaveTextContent("Retrying…")
   })
 
   it("blocks an empty name inline without calling the API", async () => {
@@ -176,41 +172,5 @@ describe("Add employer dialog (GAP-8)", () => {
     )
     expect(screen.getByRole("dialog")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Add" })).toBeEnabled()
-  })
-
-  it("stops polling at the bounded timeout and reports it honestly", async () => {
-    vi.useFakeTimers()
-    try {
-      mockedApi.mockResolvedValue([])
-      mockedApiPost.mockImplementation(async (path) => {
-        if (path === "/api/companies") return HOOLI_CREATED
-        if (path === "/api/companies/9/resolve") return { status: "accepted" }
-        throw new Error(`unexpected POST ${path}`)
-      })
-      renderWithProviders(<Employers />)
-
-      fireEvent.click(screen.getByRole("button", { name: "Add employer" }))
-      fireEvent.change(screen.getByLabelText("Name"), {
-        target: { value: "Hooli" },
-      })
-      fireEvent.click(screen.getByRole("button", { name: "Add" }))
-      await act(async () => {
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-
-      expect(screen.getByText("Finding their job board…")).toBeInTheDocument()
-
-      await act(async () => {
-        vi.advanceTimersByTime(RESOLVE_TIMEOUT_MS)
-      })
-
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
-      expect(screen.getByRole("status")).toHaveTextContent(
-        /still finding their job board/i
-      )
-    } finally {
-      vi.useRealTimers()
-    }
   })
 })
