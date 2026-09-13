@@ -64,11 +64,19 @@ export function CoverageCard() {
   const companiesQuery = useQuery({
     queryKey: ["companies"],
     queryFn: () => api<CompanyOut[]>("/api/companies"),
-    refetchInterval: (query) =>
-      queue.isPending ||
-      Object.keys(deriveInFlight(queuedRows, query.state.data ?? [])).length > 0
+    refetchInterval: (query) => {
+      // GAP-13: keep polling while any persisted row is Resolving, in addition
+      // to the optimistic trigger window and the derived in-flight set.
+      const data = query.state.data ?? []
+      const anyResolving = data.some(
+        (company) => company.resolution_state === "resolving"
+      )
+      return anyResolving ||
+        queue.isPending ||
+        Object.keys(deriveInFlight(queuedRows, data)).length > 0
         ? 2000
-        : false,
+        : false
+    },
   })
 
   useEffect(() => {
@@ -96,7 +104,7 @@ export function CoverageCard() {
     resolved: 0,
   }
   const needingAttention = (companiesQuery.data ?? []).filter(
-    (company) => !company.resolved
+    (company) => !company.resolved && company.resolution_state !== "resolving"
   )
   const inFlight = deriveInFlight(queuedRows, companiesQuery.data ?? [])
   const isRetryingAll = queue.isPending || Object.keys(inFlight).length > 0
