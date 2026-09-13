@@ -12,8 +12,10 @@ posture), and the settings table keeps only secret metadata.
 from __future__ import annotations
 
 import os
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -24,6 +26,7 @@ from huntloop.config import (
     ConfigError,
     load_effective_config,
     parse_run_at,
+    resolve_llm_api_key,
 )
 from huntloop.credentials.store import CredentialStore
 from huntloop.db.repository import SettingsRepository
@@ -31,6 +34,17 @@ from huntloop.db.repository import SettingsRepository
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _API_KEY = "openai_api_key"
+
+# GAP-5: the typed fallback when the configured provider's /models cannot be
+# read. Common OpenAI-compatible ids — the model picker's escape hatch covers
+# anything a custom endpoint exposes under other names.
+FALLBACK_MODELS: tuple[str, ...] = (
+    "gpt-4o-mini",
+    "gpt-4o",
+    "gpt-4.1-mini",
+    "gpt-4.1",
+    "o4-mini",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +61,13 @@ class ModelsOut(BaseModel):
     triage: str
     scoring: str
     extraction: str
+
+
+class AvailableModelsOut(BaseModel):
+    """The model picker's options (GAP-5): provider list or typed fallback."""
+
+    models: list[str]
+    source: Literal["provider", "fallback"]
 
 
 class ScheduleOut(BaseModel):
@@ -134,6 +155,39 @@ def _validate_base_url(value: str) -> str:
     return url
 
 
+def _fetch_provider_models(base_url: str, api_key: str) -> list[str] | None:
+    """List the configured endpoint's models, or None when it cannot be read.
+
+    Uses httpx directly (never the openai SDK) so the stored key stays
+    server-side; this is a backend proxy, OPS-06-safe. Any failure — refused
+    connection, 401, timeout, malformed body — degrades to None so the caller
+    can serve a typed fallback rather than an error.
+    """
+    try:
+        with httpx.Client(timeout=5.0) as http_client:
+            response = http_client.get(
+                f"{base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+        if response.status_code // 100 != 2:
+            return None
+        payload = response.json()
+    except Exception:  # noqa: BLE001 - any provider failure degrades to fallback
+        return None
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return None
+    ids = {
+        item["id"].strip()
+        for item in data
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and item["id"].strip()
+    }
+    return sorted(ids) if ids else None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -154,6 +208,46 @@ def read_settings(
         models=_models_out(cfg),
         schedule=_schedule_out(cfg),
         spend_cap=_spend_cap_out(cfg),
+    )
+
+
+@router.get("/models", response_model=AvailableModelsOut)
+def read_available_models(
+    session: Session = Depends(get_session),
+    credentials_session: Session = Depends(get_credentials_session),
+) -> AvailableModelsOut:
+    """Which models can this endpoint use? (GAP-5)
+
+    The list is fetched through the backend with the stored key, so the key
+    never reaches the browser. Any provider failure returns a typed fallback
+    that still includes the saved per-stage models, so the dropdown always has
+    options; free-text entry remains the escape hatch for custom endpoints.
+    """
+    cfg = load_effective_config(session)
+    try:
+        api_key: str | None = resolve_llm_api_key(credentials_session)
+    except ConfigError:
+        api_key = None
+
+    provider_models: list[str] | None = None
+    if api_key:
+        try:
+            provider_models = _fetch_provider_models(cfg.openai_base_url, api_key)
+        except Exception:  # noqa: BLE001 - never fail the section on a provider call
+            provider_models = None
+
+    if provider_models:
+        return AvailableModelsOut(
+            models=sorted(set(provider_models)), source="provider"
+        )
+
+    saved = {
+        model.strip()
+        for model in (cfg.triage_model, cfg.scoring_model, cfg.extraction_model)
+        if model and model.strip()
+    }
+    return AvailableModelsOut(
+        models=sorted(set(FALLBACK_MODELS) | saved), source="fallback"
     )
 
 

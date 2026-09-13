@@ -6,6 +6,8 @@ credential store (never the settings table, never a response).
 
 from __future__ import annotations
 
+from typing import ClassVar, Self
+
 import pytest
 
 from huntloop.api.routers import settings
@@ -166,14 +168,14 @@ class _FakeModelsResponse:
 class _FakeModelsClient:
     """Stands in for `httpx.Client` so the real helper seam is exercised."""
 
-    captured: dict = {}
-    status_code = 200
-    payload: dict = {"data": []}
+    captured: ClassVar[dict] = {}
+    status_code: ClassVar[int] = 200
+    payload: ClassVar[dict] = {"data": []}
 
     def __init__(self, *args, **kwargs) -> None:
         _FakeModelsClient.captured["init_kwargs"] = kwargs
 
-    def __enter__(self) -> "_FakeModelsClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc) -> bool:
