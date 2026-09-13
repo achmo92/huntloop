@@ -1,8 +1,9 @@
-import { Link } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
-import { AlertTriangleIcon } from "lucide-react"
-import { api } from "@/lib/api"
+import { useEffect, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { AlertTriangleIcon, Loader2Icon, RefreshCwIcon } from "lucide-react"
+import { api, apiPost, ApiError } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -17,8 +18,20 @@ import type { CompanyOut, CoverageOut } from "./types"
  * count of what is actually watchable is the card's title line; employers that
  * could not be resolved for automatic watching are listed right beneath for
  * manual attention. The server computes the numbers — no client-side math.
+ *
+ * GAP-7/D-7a: the call to action is a real bulk retry, not a navigation. It
+ * queues resolution for every unresolved employer through
+ * POST /api/companies/resolve-batch, shows an in-progress state, and lets the
+ * shared ["companies"] cache repaint each row as the background probes finish.
+ * The action is hidden when nothing is pending (D-7b).
  */
 export function CoverageCard() {
+  const queryClient = useQueryClient()
+  // id -> last_checked_at at the moment the batch was queued. The probe is done
+  // once the row resolves or its last_checked_at changes; then polling stops.
+  const [retrying, setRetrying] = useState<Record<string, string | null>>({})
+  const [toast, setToast] = useState<string | null>(null)
+
   const coverageQuery = useQuery({
     queryKey: ["coverage"],
     queryFn: () => api<CoverageOut>("/api/companies/coverage"),
@@ -26,7 +39,35 @@ export function CoverageCard() {
   const companiesQuery = useQuery({
     queryKey: ["companies"],
     queryFn: () => api<CompanyOut[]>("/api/companies"),
+    refetchInterval: () => (Object.keys(retrying).length > 0 ? 2000 : false),
   })
+
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 4000)
+    return () => clearTimeout(timer)
+  }, [toast])
+
+  // Stop showing "Retrying…" once each probe finishes, whether it succeeded or
+  // failed again (a new last_checked_at is the signal that it ran).
+  useEffect(() => {
+    const data = companiesQuery.data
+    if (!data) return
+    setRetrying((prev) => {
+      if (Object.keys(prev).length === 0) return prev
+      const next = { ...prev }
+      let changed = false
+      for (const id of Object.keys(prev)) {
+        const company = data.find((candidate) => candidate.id === id)
+        if (!company) continue
+        if (company.resolved || company.last_checked_at !== prev[id]) {
+          delete next[id]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [companiesQuery.data])
 
   if (coverageQuery.isLoading) {
     return (
@@ -49,6 +90,26 @@ export function CoverageCard() {
   const needingAttention = (companiesQuery.data ?? []).filter(
     (company) => !company.resolved
   )
+  const isRetryingAll = Object.keys(retrying).length > 0
+
+  async function retryAll() {
+    if (needingAttention.length === 0) return
+    setRetrying(
+      Object.fromEntries(needingAttention.map((c) => [c.id, c.last_checked_at]))
+    )
+    try {
+      await apiPost("/api/companies/resolve-batch", {
+        ids: needingAttention.map((c) => c.id),
+      })
+      await queryClient.invalidateQueries({ queryKey: ["companies"] })
+      await queryClient.invalidateQueries({ queryKey: ["coverage"] })
+    } catch (error) {
+      setRetrying({})
+      setToast(
+        error instanceof ApiError ? error.detail : "Couldn't start the retry."
+      )
+    }
+  }
 
   return (
     <Card>
@@ -89,14 +150,37 @@ export function CoverageCard() {
                 ))}
               </ul>
             ) : null}
-            <Link
-              to="/employers"
-              className="w-fit text-sm font-medium text-primary underline-offset-4 hover:underline"
-            >
-              Review employers and retry
-            </Link>
+            {needingAttention.length > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-fit"
+                disabled={isRetryingAll}
+                onClick={retryAll}
+              >
+                {isRetryingAll ? (
+                  <Loader2Icon className="animate-spin" />
+                ) : (
+                  <RefreshCwIcon />
+                )}
+                {isRetryingAll
+                  ? "Retrying…"
+                  : `Retry all ${needingAttention.length} pending employer${
+                      needingAttention.length === 1 ? "" : "s"
+                    }`}
+              </Button>
+            ) : null}
           </div>
         </CardContent>
+      ) : null}
+      {toast ? (
+        <div
+          role="status"
+          className="fixed right-4 bottom-4 z-50 rounded-lg border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md"
+        >
+          {toast}
+        </div>
       ) : null}
     </Card>
   )
