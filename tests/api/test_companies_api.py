@@ -86,10 +86,60 @@ def test_list_shows_resolved_and_needs_attention_with_detail(client, make_sessio
 
     assert by_name["Acme"]["resolution_status"] == "resolved"
     assert by_name["Acme"]["resolved"] is True
+    assert by_name["Acme"]["resolution_detail"] is None
     assert by_name["Globex"]["resolution_status"] == "needs_attention"
     assert by_name["Globex"]["resolved"] is False
-    # D-07: the failure state surfaces WHAT WAS TRIED
-    assert "12 probes, all failed" in by_name["Globex"]["resolution_detail"]
+    # D-07/GAP-10: the failure state surfaces a generic user-facing message; the
+    # raw probe/candidate trail must never reach the wire.
+    assert by_name["Globex"]["resolution_detail"] is not None
+    assert "tiers ran" not in resp.text
+    assert "probes, all failed" not in resp.text
+
+
+def test_unprobed_company_has_no_resolution_detail(client, make_session):
+    """A never-probed employer has no resolution block, so no failure message.
+
+    A freshly added employer must NOT show the failure sentence before any
+    probe has run (GAP-10).
+    """
+    session = make_session()
+    try:
+        _mk_company(session, "Initech")
+        session.commit()
+    finally:
+        session.close()
+
+    row = client.get("/api/companies").json()[0]
+    assert row["resolution_status"] == "needs_attention"
+    assert row["resolution_detail"] is None
+
+
+def test_resolved_company_with_raw_reason_has_no_resolution_detail(
+    client, make_session
+):
+    """A resolved employer never exposes a stale raw reason on the wire (GAP-10)."""
+    session = make_session()
+    try:
+        _mk_company(
+            session,
+            "Acme",
+            ats=AtsPlatform.GREENHOUSE,
+            ats_identifier="acme",
+            ats_config={
+                "resolution": {
+                    "status": "resolved",
+                    "reason": "tiers ran: tier1_guess; legacy trail",
+                }
+            },
+            resolved_at=datetime.now(UTC),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    row = client.get("/api/companies").json()[0]
+    assert row["resolved"] is True
+    assert row["resolution_detail"] is None
 
 
 def test_resolved_row_exposes_platform_and_board_identifier(client, make_session):
