@@ -20,7 +20,7 @@ from __future__ import annotations
 import enum
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import TYPE_CHECKING
 
 import httpx
@@ -37,6 +37,12 @@ if TYPE_CHECKING:
 # Ordered preference for source evidence strength.
 _SOURCE_ORDER = {"static_html": 0, "rendered_html": 1, "name_guess": 2}
 _MAX_PROBES = 12
+
+# GAP-13: the persisted resolution lifecycle stored in
+# ``ats_config["resolution"]["state"]``. Schema-neutral — no model change.
+RESOLVED = "resolved"
+RESOLVING = "resolving"
+ERROR = "error"
 
 
 class ResolutionStatus(str, enum.Enum):
@@ -297,6 +303,37 @@ def _best_source(candidates: list[SlugCandidate], platform: str, slug: str) -> s
 # ---------------------------------------------------------------------------
 
 
+def mark_resolving(ats_config: dict | None) -> dict:
+    """Persist an in-flight marker so 'Resolving' survives a refresh (GAP-13).
+
+    Replaces the whole ``resolution`` block with a minimal marker: whatever was
+    there before is a completed attempt whose outcome the new probe now
+    supersedes.
+    """
+    config = dict(ats_config) if ats_config else {}
+    config["resolution"] = {
+        "state": RESOLVING,
+        "started_at": datetime.now(UTC).isoformat(),
+    }
+    return config
+
+
+def mark_resolution_error(ats_config: dict | None, *, reason: str) -> dict:
+    """Record a completed, unsuccessful attempt (unexpected failure path).
+
+    Used when the probe dies outside the resolver's own failure handling, so
+    the marker can never be left stuck at ``resolving`` (GAP-13).
+    """
+    config = dict(ats_config) if ats_config else {}
+    config["resolution"] = {
+        "state": ERROR,
+        "status": ResolutionStatus.UNRESOLVED.value,
+        "reason": reason,
+        "finished_at": datetime.now(UTC).isoformat(),
+    }
+    return config
+
+
 def build_ats_config(result: ResolutionResult) -> dict:
     """Build the JSON blob persisted in ``companies.ats_config``.
 
@@ -305,11 +342,16 @@ def build_ats_config(result: ResolutionResult) -> dict:
     and got lucky" and "the page told us" is the only thing that makes the failure
     diagnosable — and REG-04's Phase 4 review surface reads exactly this block.
 
-    ``checked_at`` is serialised as a string (not datetime) so ``json.dumps`` on
-    the JSON column never fails.
+    ``checked_at``/``finished_at`` are serialised as strings (not datetime) so
+    ``json.dumps`` on the JSON column never fails. GAP-13 adds ``state`` and
+    ``finished_at`` so a completed probe always supersedes a ``resolving`` marker.
     """
+    finished_at = datetime.now(timezone.utc).isoformat()
     return {
         "resolution": {
+            "state": RESOLVED
+            if result.status is ResolutionStatus.RESOLVED
+            else ERROR,
             "status": result.status.value,
             "resolved_via": result.resolved_via,
             "careers_url": result.careers_url,
@@ -334,7 +376,8 @@ def build_ats_config(result: ResolutionResult) -> dict:
                 }
                 for p in result.probed
             ],
-            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "checked_at": finished_at,
+            "finished_at": finished_at,
             "reason": result.reason,
         }
     }

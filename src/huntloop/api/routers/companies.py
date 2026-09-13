@@ -13,7 +13,7 @@ list endpoint deliberately does not filter on ``enabled`` (one list, D-08).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -24,6 +24,7 @@ from huntloop.api.background import resolve_company_in_background, run_in_backgr
 from huntloop.api.deps import get_session
 from huntloop.db.models import Company
 from huntloop.db.repository import CompanyRepository
+from huntloop.registry.resolve import mark_resolving
 from huntloop.registry.staleness import is_possibly_stale, staleness_message
 
 router = APIRouter(prefix="/api/companies", tags=["companies"])
@@ -50,9 +51,10 @@ class CompanyOut(BaseModel):
     careers_url: str | None
     enabled: bool
     resolved: bool
-    # "resolved" | "needs_attention" — a status column, never an error (D-07).
-    resolution_status: str
-    # What was tried / why it failed, read from the persisted resolution block.
+    # GAP-13 lifecycle, derived from persisted facts: "added" | "resolving" |
+    # "resolved" | "error" — a status, never an error (D-07).
+    resolution_state: str
+    # The generic failure sentence; only present in the "error" state.
     resolution_detail: str | None
     possibly_stale: bool
     staleness_message: str | None
@@ -104,22 +106,61 @@ def _resolution_block(company: Company) -> dict:
     return company.ats_config.get("resolution", {}) or {}
 
 
-def _resolution_detail(company: Company, *, resolved: bool) -> str | None:
-    """The generic failure sentence for an employer whose probe failed.
+def _parse_iso(value: object) -> datetime | None:
+    """Parse a persisted ISO timestamp; None when missing or malformed."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Normalise a datetime to UTC so naive/aware comparisons never raise."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _resolution_state(company: Company) -> str:
+    """Derive the one honest lifecycle state from persisted facts (GAP-13).
+
+    A ``resolving`` marker is authoritative only while it is newer than the
+    last successful completion (or there is none); a stale marker can therefore
+    never mask a newer ``resolved``. With no marker: ``resolved`` when
+    ``resolved_at`` is set, ``error`` when a completed (unsuccessful) resolution
+    block exists, else ``added``.
+    """
+    block = _resolution_block(company)
+    if block.get("state") == "resolving":
+        started = _as_utc(_parse_iso(block.get("started_at")))
+        if started is None:
+            return "resolving"
+        resolved_at = _as_utc(company.resolved_at)
+        if resolved_at is None or started > resolved_at:
+            return "resolving"
+    if company.resolved_at is not None:
+        return "resolved"
+    if block:
+        return "error"
+    return "added"
+
+
+def _resolution_detail(state: str) -> str | None:
+    """The generic failure sentence, shown ONLY in the error state (GAP-13).
 
     The raw ``ats_config.resolution.reason`` stays persisted for diagnostics and
-    is deliberately never returned. A never-probed employer has no resolution
-    block and therefore no message.
+    is deliberately never returned.
     """
-    if resolved:
-        return None
-    if not _resolution_block(company):
-        return None
-    return RESOLUTION_FAILURE_MESSAGE
+    return RESOLUTION_FAILURE_MESSAGE if state == "error" else None
 
 
 def _company_to_out(company: Company) -> CompanyOut:
     resolved = company.resolved_at is not None
+    state = _resolution_state(company)
     return CompanyOut(
         id=company.id,
         name=company.name,
@@ -128,8 +169,8 @@ def _company_to_out(company: Company) -> CompanyOut:
         careers_url=company.careers_url,
         enabled=company.enabled,
         resolved=resolved,
-        resolution_status="resolved" if resolved else "needs_attention",
-        resolution_detail=_resolution_detail(company, resolved=resolved),
+        resolution_state=state,
+        resolution_detail=_resolution_detail(state),
         possibly_stale=is_possibly_stale(company),
         staleness_message=staleness_message(company),
         last_job_count=company.last_job_count,
@@ -197,7 +238,16 @@ def resolve_batch(
     Resolution probes are I/O-bound; per-employer threads mirror the Phase 2
     fan-out philosophy. Resolution is not a Run, so the scheduler's
     run-overlap guard is unaffected.
+
+    GAP-13: the ``resolving`` marker for every existing id is committed BEFORE
+    any thread starts and before the 202, so a refresh mid-probe reads
+    ``resolving`` rather than the old two-value status.
     """
+    for company_id in body.ids:
+        company = session.get(Company, company_id)
+        if company is not None:
+            company.ats_config = mark_resolving(company.ats_config)
+    session.commit()
     for company_id in body.ids:
         run_in_background(resolve_company_in_background, company_id)
     return ResolveBatchResult(queued=len(body.ids))
@@ -249,8 +299,15 @@ def resolve_company(
 
     Never awaits the probe in-request: live probes take seconds-to-tens-of-
     seconds. The row's resolution state updates when the thread finishes.
+
+    GAP-13: the ``resolving`` marker is committed synchronously BEFORE the
+    background thread starts and before the 202, so a page refresh mid-probe
+    reads ``resolving`` instead of collapsing to ``added``.
     """
-    if session.get(Company, company_id) is None:
+    company = session.get(Company, company_id)
+    if company is None:
         raise HTTPException(status_code=404, detail=f"company {company_id} not found")
+    company.ats_config = mark_resolving(company.ats_config)
+    session.commit()
     run_in_background(resolve_company_in_background, company_id)
     return ResolveAccepted(status="accepted")

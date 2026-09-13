@@ -12,6 +12,7 @@ import inside the function would instead require patching the source module.
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 
@@ -20,7 +21,13 @@ import httpx
 from huntloop.db.base import get_engine, make_session_factory
 from huntloop.db.models import Company
 from huntloop.discovery.fetch.page import RenderedPageFetcher, StaticPageFetcher
-from huntloop.registry.resolve import persist_resolution, resolve_employer
+from huntloop.registry.resolve import (
+    mark_resolution_error,
+    persist_resolution,
+    resolve_employer,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def run_in_background(fn, *args, **kwargs) -> threading.Thread:
@@ -43,6 +50,10 @@ def resolve_company_in_background(company_id: uuid.UUID) -> None:
     ``resolve_employer`` and ``persist_resolution`` — the identical code path
     the CLI uses, never a reimplementation — commits, and always closes both
     the HTTP client and the session.
+
+    GAP-13: every path must be terminal. An unexpected exception is rolled back
+    and recorded as an ``error`` state (with the raw reason) rather than
+    escaping the thread and leaving the persisted ``resolving`` marker stuck.
     """
     session = make_session_factory(get_engine())()
     client = httpx.Client(timeout=10.0, follow_redirects=True)
@@ -50,15 +61,25 @@ def resolve_company_in_background(company_id: uuid.UUID) -> None:
         company = session.get(Company, company_id)
         if company is None:
             return
-        result = resolve_employer(
-            name=company.name,
-            careers_url=company.careers_url,
-            client=client,
-            static_fetcher=StaticPageFetcher(),
-            rendered_fetcher=RenderedPageFetcher(),
-        )
-        persist_resolution(session, company.name, result)
-        session.commit()
+        try:
+            result = resolve_employer(
+                name=company.name,
+                careers_url=company.careers_url,
+                client=client,
+                static_fetcher=StaticPageFetcher(),
+                rendered_fetcher=RenderedPageFetcher(),
+            )
+            persist_resolution(session, company.name, result)
+            session.commit()
+        except Exception as exc:  # a background probe must never leave the marker stuck
+            session.rollback()
+            failed = session.get(Company, company_id)
+            if failed is not None:
+                failed.ats_config = mark_resolution_error(
+                    failed.ats_config, reason=str(exc)
+                )
+                session.commit()
+            logger.exception("background resolution failed for %s", company_id)
     finally:
         client.close()
         session.close()
