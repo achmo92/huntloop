@@ -135,7 +135,14 @@ describe("Criteria intake flow (merged page)", () => {
 
   it("saves via POST /api/criteria and reaches the employer-proposal step", async () => {
     const user = userEvent.setup()
-    mockedApi.mockResolvedValue({ current: null, total_versions: 0 })
+    // The form's employer typeahead (GAP-2) shares the ["companies"] cache, so
+    // the GET mock must answer it with an array or the proposals step's
+    // refetchInterval would call `.some` on a non-array.
+    mockedApi.mockImplementation(async (path) => {
+      if (path === "/api/companies") return []
+      if (path === "/api/criteria") return { current: null, total_versions: 0 }
+      throw new Error(`unexpected GET ${path}`)
+    })
     mockedApiPost.mockImplementation(async (path) => {
       if (path === "/api/criteria/describe") return { suggested: SUGGESTED }
       if (path === "/api/criteria") return { version: 1 }

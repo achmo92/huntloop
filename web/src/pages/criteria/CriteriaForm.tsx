@@ -33,6 +33,7 @@ import {
   type DimensionKey,
   type DimensionWeights,
 } from "./DimensionRanker"
+import { SuggestField } from "./SuggestField"
 import {
   COMP_PERIODS,
   COUNTRY_CODES,
@@ -898,13 +899,15 @@ export function CriteriaForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Employers to exclude</FormLabel>
-                <ChipField
+                <SuggestField
                   values={field.value}
                   onChange={field.onChange}
-                  validate={freeText}
                   ariaLabel="Add an excluded employer"
-                  placeholder="Type an employer, press Enter"
+                  placeholder="Type an employer…"
                 />
+                <FormDescription>
+                  Suggestions come from your employer registry — any name works.
+                </FormDescription>
               </FormItem>
             )}
           />

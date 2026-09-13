@@ -238,7 +238,9 @@ describe("CriteriaForm employer typeahead (GAP-2)", () => {
     })
     renderForm({ defaultValues: REPRESENTATIVE })
 
-    await user.type(screen.getByLabelText("Add an excluded employer"), "aci")
+    // Prefix semantics (the plan's action spec): "ac" is a true prefix of
+    // "Acme Corp"; the plan's "aci" example is not a prefix of any code value.
+    await user.type(screen.getByLabelText("Add an excluded employer"), "ac")
 
     expect(
       await screen.findByRole("option", { name: "Acme Corp" })
@@ -278,7 +280,7 @@ describe("CriteriaForm employer typeahead (GAP-2)", () => {
     mockedApi.mockResolvedValue([])
     renderForm({ defaultValues: REPRESENTATIVE })
 
-    await user.type(screen.getByLabelText("Add an excluded employer"), "aci")
+    await user.type(screen.getByLabelText("Add an excluded employer"), "ac")
 
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
     expect(
