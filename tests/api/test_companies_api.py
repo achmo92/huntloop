@@ -10,7 +10,7 @@ contract asserts the one named constant instead of duplicating the sentence.
 
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -83,10 +83,10 @@ def test_list_shows_resolved_and_needs_attention_with_detail(client, make_sessio
     assert resp.status_code == 200
     by_name = {row["name"]: row for row in resp.json()}
 
-    assert by_name["Acme"]["resolution_status"] == "resolved"
+    assert by_name["Acme"].get("resolution_state") == "resolved"
     assert by_name["Acme"]["resolved"] is True
     assert by_name["Acme"]["resolution_detail"] is None
-    assert by_name["Globex"]["resolution_status"] == "needs_attention"
+    assert by_name["Globex"].get("resolution_state") == "error"
     assert by_name["Globex"]["resolved"] is False
     # D-07/GAP-10: the failure state surfaces a generic user-facing message; the
     # raw probe/candidate trail must never reach the wire.
@@ -95,11 +95,12 @@ def test_list_shows_resolved_and_needs_attention_with_detail(client, make_sessio
     assert "probes, all failed" not in resp.text
 
 
-def test_unprobed_company_has_no_resolution_detail(client, make_session):
-    """A never-probed employer has no resolution block, so no failure message.
+def test_unprobed_company_is_added(client, make_session):
+    """A never-probed employer reads `added` and has no failure message.
 
     A freshly added employer must NOT show the failure sentence before any
-    probe has run (GAP-10).
+    probe has run, and its lifecycle state is `added` rather than the old
+    two-value `needs_attention` (GAP-10, GAP-13).
     """
     session = make_session()
     try:
@@ -109,7 +110,7 @@ def test_unprobed_company_has_no_resolution_detail(client, make_session):
         session.close()
 
     row = client.get("/api/companies").json()[0]
-    assert row["resolution_status"] == "needs_attention"
+    assert row.get("resolution_state") == "added"
     assert row["resolution_detail"] is None
 
 
@@ -200,7 +201,7 @@ def test_add_returns_201_and_unresolved(client, make_session):
     assert body["name"] == "Acme"
     assert body["enabled"] is True
     assert body["resolved"] is False
-    assert body["resolution_status"] == "needs_attention"
+    assert body.get("resolution_state") == "added"
 
     session = make_session()
     try:
@@ -319,6 +320,24 @@ def _poll_resolved(make_session, company_id, timeout=5.0) -> Company:
     pytest.fail("background resolution did not complete before the poll timeout")
 
 
+def _poll_state(client, name: str, state: str, timeout=5.0) -> dict:
+    """GET /api/companies until the named row reports ``state`` (GAP-13).
+
+    The background probe runs on its own thread, so the wire row is the only
+    truthful signal that the lifecycle has landed.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        row = next(
+            (r for r in client.get("/api/companies").json() if r["name"] == name),
+            None,
+        )
+        if row is not None and row.get("resolution_state") == state:
+            return row
+        time.sleep(0.05)
+    pytest.fail(f"{name} never reached resolution_state={state!r}")
+
+
 def test_resolve_returns_202_and_background_updates_state(
     client, make_session, api_engine, monkeypatch
 ):
@@ -339,6 +358,184 @@ def test_resolve_returns_202_and_background_updates_state(
     company = _poll_resolved(make_session, company_id)
     assert company.ats == AtsPlatform.GREENHOUSE
     assert company.ats_identifier == "acme"
+
+
+def test_resolve_sets_resolving_marker_synchronously(
+    client, make_session, monkeypatch
+):
+    """The 202 commits the Resolving marker before returning (GAP-13).
+
+    The background thread is stubbed out entirely, so the only thing that can
+    make the row read `resolving` is the marker the request itself commits.
+    """
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme", careers_url="https://acme.test/careers")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    monkeypatch.setattr(
+        "huntloop.api.routers.companies.run_in_background", lambda *a, **k: None
+    )
+
+    resp = client.post(f"/api/companies/{company_id}/resolve")
+    assert resp.status_code == 202
+
+    row = next(r for r in client.get("/api/companies").json() if r["name"] == "Acme")
+    assert row.get("resolution_state") == "resolving"
+    assert row["resolved"] is False
+    assert row["resolution_detail"] is None
+
+
+def test_resolve_batch_sets_resolving_marker_for_each(
+    client, make_session, monkeypatch
+):
+    """resolve-batch commits the Resolving marker for every id before 202 (GAP-13)."""
+    session = make_session()
+    try:
+        first = _mk_company(session, "Acme")
+        second = _mk_company(session, "Globex")
+        ids = [first.id, second.id]
+        session.commit()
+    finally:
+        session.close()
+
+    monkeypatch.setattr(
+        "huntloop.api.routers.companies.run_in_background", lambda *a, **k: None
+    )
+
+    resp = client.post(
+        "/api/companies/resolve-batch", json={"ids": [str(i) for i in ids]}
+    )
+    assert resp.status_code == 202
+    assert resp.json() == {"queued": 2}
+
+    rows = {r["name"]: r for r in client.get("/api/companies").json()}
+    assert rows["Acme"].get("resolution_state") == "resolving"
+    assert rows["Globex"].get("resolution_state") == "resolving"
+
+
+def test_resolve_completion_replaces_marker_with_resolved_state(
+    client, make_session, api_engine, monkeypatch
+):
+    """A completed probe lands `resolved` and leaves no `resolving` marker (GAP-13)."""
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme", careers_url="https://acme.test/careers")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    _resolve_on_test_engine(monkeypatch, api_engine, _resolved_result())
+
+    assert client.post(f"/api/companies/{company_id}/resolve").status_code == 202
+
+    row = _poll_state(client, "Acme", "resolved")
+    assert row["resolved"] is True
+    assert row["ats"] == "greenhouse"
+    assert row["ats_identifier"] == "acme"
+
+    session = make_session()
+    try:
+        company = session.get(Company, company_id)
+        assert company.ats_config["resolution"]["state"] == "resolved"
+    finally:
+        session.close()
+
+
+def test_failed_resolution_shows_error_state_and_generic_detail(
+    client, make_session, api_engine, monkeypatch
+):
+    """A failed probe lands `error` with the generic sentence, not the raw trail."""
+    session = make_session()
+    try:
+        company = _mk_company(
+            session, "Globex", careers_url="https://globex.test/careers"
+        )
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    _resolve_on_test_engine(
+        monkeypatch,
+        api_engine,
+        ResolutionResult(
+            status=ResolutionStatus.UNRESOLVED,
+            reason="tiers ran: tier1_guess; 3 probes, all failed",
+        ),
+    )
+
+    assert client.post(f"/api/companies/{company_id}/resolve").status_code == 202
+
+    row = _poll_state(client, "Globex", "error")
+    assert row["resolved"] is False
+    assert row["resolution_detail"] == RESOLUTION_FAILURE_MESSAGE
+
+    resp = client.get("/api/companies")
+    assert "tiers ran" not in resp.text
+    assert "probes, all failed" not in resp.text
+
+
+def test_unexpected_probe_exception_records_error_and_clears_marker(
+    client, make_session, api_engine, monkeypatch
+):
+    """An unexpected probe exception must land `error`, never a stuck marker (GAP-13)."""
+    session = make_session()
+    try:
+        company = _mk_company(
+            session, "Initech", careers_url="https://initech.test/careers"
+        )
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    from huntloop.api import background
+
+    monkeypatch.setattr(background, "get_engine", lambda: api_engine)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(background, "resolve_employer", _boom)
+
+    assert client.post(f"/api/companies/{company_id}/resolve").status_code == 202
+
+    row = _poll_state(client, "Initech", "error")
+    assert row["resolved"] is False
+    assert row["resolution_detail"] == RESOLUTION_FAILURE_MESSAGE
+
+
+def test_stale_resolving_marker_older_than_completion_reads_resolved(
+    client, make_session
+):
+    """A stale `resolving` marker never overrides a newer successful completion."""
+    resolved_at = datetime.now(UTC)
+    session = make_session()
+    try:
+        _mk_company(
+            session,
+            "Acme",
+            ats=AtsPlatform.GREENHOUSE,
+            ats_identifier="acme",
+            ats_config={
+                "resolution": {
+                    "state": "resolving",
+                    "started_at": (resolved_at - timedelta(seconds=30)).isoformat(),
+                }
+            },
+            resolved_at=resolved_at,
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    row = client.get("/api/companies").json()[0]
+    assert row.get("resolution_state") == "resolved"
 
 
 def test_resolve_batch_queues_each_employer(
