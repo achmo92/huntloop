@@ -65,6 +65,15 @@ const ALPHA3_CURRENCY_CODES = (
   "XBD,XCD,XCG,XDR,XOF,XPD,XPF,XPT,XSU,XTS,XUA,XXX,YER,ZAR,ZMW,ZWG"
 ).split(",")
 
+/**
+ * The bounded value lists the criteria form's dropdowns render. Exported as
+ * the single source of truth shared with the validators below — a control can
+ * only ever offer a value `isAlpha2Country` / `isAlpha3Currency` accepts, so
+ * the form cannot present a value the server's Pydantic validators would 422.
+ */
+export const COUNTRY_CODES = ALPHA2_COUNTRY_CODES as readonly string[]
+export const CURRENCY_CODES = ALPHA3_CURRENCY_CODES as readonly string[]
+
 const COUNTRY_SET = new Set(ALPHA2_COUNTRY_CODES)
 const CURRENCY_SET = new Set(ALPHA3_CURRENCY_CODES)
 const REGION_SET: ReadonlySet<string> = new Set(VALID_REGIONS)

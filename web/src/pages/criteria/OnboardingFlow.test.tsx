@@ -161,12 +161,25 @@ describe("Criteria intake flow (merged page)", () => {
 
   it("shows an inline currency error and blocks submit", async () => {
     const user = userEvent.setup()
-    mockedApi.mockResolvedValue(EXISTING_RESPONSE)
+    // Currency is a picker now (GAP-2), so the invalid value is hand-forced in
+    // the loaded payload rather than typed. The zod authority is unchanged.
+    mockedApi.mockResolvedValue({
+      current: {
+        ...EXISTING_RESPONSE.current,
+        payload: {
+          ...EXISTING_PAYLOAD,
+          compensation_floor: {
+            amount: 80000,
+            currency: "ZZ",
+            period: "annual",
+          },
+        },
+      },
+      total_versions: 2,
+    })
     renderWithProviders(<Criteria />)
 
-    const currency = await screen.findByLabelText("Currency")
-    await user.clear(currency)
-    await user.type(currency, "ZZ")
+    await screen.findByLabelText("Currency")
     await user.click(screen.getByRole("button", { name: "Save new version" }))
 
     expect(

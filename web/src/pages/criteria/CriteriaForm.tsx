@@ -35,11 +35,12 @@ import {
 } from "./DimensionRanker"
 import {
   COMP_PERIODS,
+  COUNTRY_CODES,
+  CURRENCY_CODES,
   SENIORITY_LABELS,
   SENIORITY_LADDER,
-  isAlpha2Country,
+  VALID_REGIONS,
   isAlpha3Currency,
-  isRegion,
   type CompensationPeriod,
   type Seniority,
 } from "./iso"
@@ -455,22 +456,109 @@ function ChipField({
   )
 }
 
-function countryValidation(raw: string): ChipValidation {
-  const code = raw.toUpperCase()
-  return isAlpha2Country(code)
-    ? { value: code }
-    : { error: "Use a 2-letter country code like US or DE" }
-}
-
-function regionValidation(raw: string): ChipValidation {
-  const code = raw.toUpperCase()
-  return isRegion(code)
-    ? { value: code }
-    : { error: "Use a region like EMEA, APAC, LATAM, NA, or EU" }
-}
-
 function freeText(raw: string): ChipValidation {
   return { value: raw }
+}
+
+/**
+ * Human label for an ISO code via the platform's own locale data — no data
+ * file, no dependency. When `Intl.DisplayNames` is unavailable the code itself
+ * is the label, so the control is always usable.
+ */
+function isoDisplayName(code: string, type: "currency" | "region"): string {
+  try {
+    const names = new Intl.DisplayNames(["en"], { type })
+    return names.of(code) ?? code
+  } catch {
+    return code
+  }
+}
+
+/** "DE — Germany": the code is always visible, the name is the aid. */
+function countryLabel(code: string): string {
+  const name = isoDisplayName(code, "region")
+  return name === code ? code : `${code} — ${name}`
+}
+
+function currencyLabel(code: string): string {
+  const name = isoDisplayName(code, "currency")
+  return name === code ? code : `${code} — ${name}`
+}
+
+interface PickerFieldProps {
+  values: string[]
+  onChange: (next: string[]) => void
+  options: readonly string[]
+  labelFor: (code: string) => string
+  placeholder: string
+  ariaLabel: string
+}
+
+/**
+ * Chip editor whose add control is a dropdown over a bounded value set
+ * (GAP-2). The server's validators are the authority; this control only ever
+ * offers values they accept, so the form can't present a value the API would
+ * 422. Chosen values still render as removable chips and dedupe exactly as the
+ * free-text ChipField did.
+ */
+function PickerField({
+  values,
+  onChange,
+  options,
+  labelFor,
+  placeholder,
+  ariaLabel,
+}: PickerFieldProps) {
+  function add(value: unknown) {
+    if (typeof value !== "string" || value === "") return
+    const exists = values.some(
+      (entry) => entry.toLowerCase() === value.toLowerCase()
+    )
+    if (!exists) onChange([...values, value])
+  }
+
+  function remove(target: string) {
+    onChange(values.filter((entry) => entry !== target))
+  }
+
+  return (
+    <div className="grid gap-2">
+      {values.length > 0 ? (
+        <ul className="flex flex-wrap gap-1.5">
+          {values.map((entry) => (
+            <li key={entry}>
+              <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm">
+                {entry}
+                <button
+                  type="button"
+                  onClick={() => remove(entry)}
+                  aria-label={`Remove ${entry}`}
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <Select
+        value={null as string | null}
+        onValueChange={(next) => add(next)}
+      >
+        <SelectTrigger aria-label={ariaLabel} className="w-full">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((code) => (
+            <SelectItem key={code} value={code}>
+              {labelFor(code)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -544,15 +632,16 @@ export function CriteriaForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Eligible countries</FormLabel>
-                <ChipField
+                <PickerField
                   values={field.value}
                   onChange={field.onChange}
-                  validate={countryValidation}
+                  options={COUNTRY_CODES}
+                  labelFor={countryLabel}
                   ariaLabel="Add an eligible country code"
-                  placeholder="Type a country code, press Enter"
+                  placeholder="Add a country…"
                 />
                 <FormDescription>
-                  ISO two-letter codes, e.g. US, DE, GB.
+                  Pick every country you'd work in. ISO codes, e.g. US, DE, GB.
                 </FormDescription>
               </FormItem>
             )}
@@ -563,12 +652,13 @@ export function CriteriaForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Eligible regions</FormLabel>
-                <ChipField
+                <PickerField
                   values={field.value}
                   onChange={field.onChange}
-                  validate={regionValidation}
+                  options={VALID_REGIONS}
+                  labelFor={(code) => code}
                   ariaLabel="Add an eligible region"
-                  placeholder="Type a region, press Enter"
+                  placeholder="Add a region…"
                 />
               </FormItem>
             )}
@@ -718,14 +808,30 @@ export function CriteriaForm({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Currency</FormLabel>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      maxLength={3}
-                      placeholder="USD"
-                      className="uppercase"
-                    />
-                  </FormControl>
+                  <Select
+                    value={(field.value || null) as string | null}
+                    onValueChange={(next) =>
+                      field.onChange(typeof next === "string" ? next : "")
+                    }
+                  >
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue>
+                          {(value: string | null) =>
+                            value ? currencyLabel(value) : "No floor currency"
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value={null}>No floor currency</SelectItem>
+                      {CURRENCY_CODES.map((code) => (
+                        <SelectItem key={code} value={code}>
+                          {currencyLabel(code)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
@@ -814,12 +920,13 @@ export function CriteriaForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Countries you're authorized to work in</FormLabel>
-                <ChipField
+                <PickerField
                   values={field.value}
                   onChange={field.onChange}
-                  validate={countryValidation}
+                  options={COUNTRY_CODES}
+                  labelFor={countryLabel}
                   ariaLabel="Add an authorized country code"
-                  placeholder="Type a country code, press Enter"
+                  placeholder="Add a country…"
                 />
               </FormItem>
             )}
