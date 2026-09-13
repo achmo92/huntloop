@@ -33,6 +33,7 @@ export function StopRunButton({ runId, className }: StopRunButtonProps) {
       variant="outline"
       size="sm"
       disabled={mutation.isPending}
+      title="Stopping is cooperative — the run stops at its next safe boundary"
       onClick={(event) => {
         // A row click opens the detail sheet; stopping must not also do that.
         event.stopPropagation()

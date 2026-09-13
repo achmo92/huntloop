@@ -275,7 +275,7 @@ describe("Runs", () => {
 
     await screen.findByText("Running")
     const stop = screen.getByRole("button", { name: "Stop" })
-    expect(stop).toHaveAttribute("title", /cooperative/i)
+    expect(stop.getAttribute("title")).toMatch(/cooperative/i)
   })
 
   it("renders a reconciled interrupted run as an error fact with its reason (GAP-15)", async () => {

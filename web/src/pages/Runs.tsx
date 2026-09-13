@@ -48,6 +48,7 @@ export default function Runs() {
 
   const runs = runsQuery.data ?? []
   const newestRunning = runs[0]?.status === "running"
+  const hasRunning = runs.some((run) => run.status === "running")
 
   // A manual trigger's row can take a beat to appear; poll briefly either way.
   useEffect(() => {
@@ -77,6 +78,13 @@ export default function Runs() {
           />
         ) : null}
       </header>
+
+      {hasRunning ? (
+        <p className="text-sm text-muted-foreground text-pretty">
+          Stopping is cooperative — an in-progress run finishes its current step,
+          then stops.
+        </p>
+      ) : null}
 
       {runsQuery.isLoading ? (
         <p className="text-sm text-muted-foreground">Loading runs…</p>
