@@ -95,11 +95,19 @@ export function RegistryTable() {
   const companiesQuery = useQuery({
     queryKey: ["companies"],
     queryFn: () => api<CompanyOut[]>("/api/companies"),
-    refetchInterval: (query) =>
-      Object.keys(retrying).length > 0 ||
-      Object.keys(deriveInFlight(queuedRows, query.state.data ?? [])).length > 0
+    refetchInterval: (query) => {
+      // GAP-13: keep polling while any persisted row is Resolving, in addition
+      // to a local/shared retry, so the final status lands without a reload.
+      const data = query.state.data ?? []
+      const anyResolving = data.some(
+        (company) => company.resolution_state === "resolving"
+      )
+      return anyResolving ||
+        Object.keys(retrying).length > 0 ||
+        Object.keys(deriveInFlight(queuedRows, data)).length > 0
         ? 2000
-        : false,
+        : false
+    },
   })
 
   const companies = useMemo(
@@ -129,7 +137,12 @@ export function RegistryTable() {
       for (const id of Object.keys(prev)) {
         const company = data.find((candidate) => candidate.id === id)
         if (!company) continue
-        if (company.resolved || company.last_checked_at !== prev[id]) {
+        if (
+          company.resolved ||
+          company.resolution_state === "resolved" ||
+          company.resolution_state === "error" ||
+          company.last_checked_at !== prev[id]
+        ) {
           delete next[id]
           changed = true
         }
@@ -222,6 +235,10 @@ export function RegistryTable() {
           {visible.map((company) => {
             const atsLabel = formatAts(company.ats, company.ats_identifier)
             const isRetrying = company.id in retrying || company.id in inFlight
+            // GAP-13: the persisted state is authoritative; the local/shared
+            // retry only adds optimistic in-flight feedback for an added row.
+            const isResolving =
+              company.resolution_state === "resolving" || isRetrying
             return (
               <TableRow
                 key={company.id}
@@ -245,16 +262,13 @@ export function RegistryTable() {
                 </TableCell>
 
                 <TableCell className="whitespace-normal">
-                  {company.resolution_status === "resolved" ? (
-                    <Badge variant="secondary" className="font-normal">
+                  {company.resolution_state === "resolved" ? (
+                    <Badge variant="success" className="font-normal">
                       {atsLabel ?? "Resolved"}
                     </Badge>
-                  ) : (
+                  ) : company.resolution_state === "error" ? (
                     <div className="flex flex-col items-start gap-1">
-                      <Badge
-                        variant="outline"
-                        className="border-destructive/40 font-normal text-destructive"
-                      >
+                      <Badge variant="destructive" className="font-normal">
                         Needs attention
                       </Badge>
                       {company.resolution_detail ? (
@@ -278,6 +292,21 @@ export function RegistryTable() {
                         {isRetrying ? "Retrying…" : "Retry resolution"}
                       </Button>
                     </div>
+                  ) : isResolving ? (
+                    <Badge variant="secondary" className="font-normal">
+                      <Loader2Icon
+                        className="animate-spin"
+                        aria-hidden="true"
+                      />
+                      Resolving…
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="font-normal text-muted-foreground"
+                    >
+                      Added
+                    </Badge>
                   )}
                 </TableCell>
 

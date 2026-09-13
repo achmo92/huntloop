@@ -10,6 +10,9 @@ export interface Candidate {
   reason: string
 }
 
+/** GAP-13: the one derived resolution lifecycle exposed on CompanyOut. */
+export type ResolutionState = "added" | "resolving" | "resolved" | "error"
+
 export interface CompanyOut {
   id: string
   name: string
@@ -18,7 +21,7 @@ export interface CompanyOut {
   careers_url: string | null
   enabled: boolean
   resolved: boolean
-  resolution_status: string
+  resolution_state: ResolutionState
   resolution_detail: string | null
   possibly_stale: boolean
   staleness_message: string | null
