@@ -8,6 +8,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { RunStatusBadge, RunTriggerBadge } from "./RunBadges"
+import { StopRunButton } from "./StopRunButton"
 import type { RunDetail as RunDetailData } from "./types"
 
 /**
@@ -88,6 +89,9 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
               <div className="flex flex-wrap items-center gap-2">
                 <RunStatusBadge status={detail.status} />
                 <RunTriggerBadge trigger={detail.trigger} />
+                {detail.status === "running" ? (
+                  <StopRunButton runId={detail.id} />
+                ) : null}
               </div>
 
               <section className="grid gap-2">

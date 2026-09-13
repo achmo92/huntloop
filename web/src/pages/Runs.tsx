@@ -13,6 +13,7 @@ import {
 import { RunNowButton } from "@/pages/dashboard/RunNowButton"
 import { RunDetail } from "./runs/RunDetail"
 import { RunStatusBadge, RunTriggerBadge } from "./runs/RunBadges"
+import { StopRunButton } from "./runs/StopRunButton"
 import type { RunOut } from "./runs/types"
 
 /**
@@ -129,7 +130,12 @@ export default function Runs() {
                   <RunTriggerBadge trigger={run.trigger} />
                 </TableCell>
                 <TableCell>
-                  <RunStatusBadge status={run.status} />
+                  <div className="flex items-center gap-2">
+                    <RunStatusBadge status={run.status} />
+                    {run.status === "running" ? (
+                      <StopRunButton runId={run.id} />
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {run.companies_checked}

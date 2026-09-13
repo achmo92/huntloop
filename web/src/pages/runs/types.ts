@@ -11,6 +11,7 @@ export type RunStatus =
   | "failed"
   | "skipped"
   | "capped"
+  | "stopped"
 
 export type RunTrigger = "scheduled" | "manual" | "catch_up"
 
@@ -50,6 +51,7 @@ export const RUN_STATUS_LABELS: Record<string, string> = {
   failed: "Failed",
   skipped: "Skipped",
   capped: "Capped",
+  stopped: "Stopped",
 }
 
 export const RUN_TRIGGER_LABELS: Record<string, string> = {
@@ -76,6 +78,7 @@ export function runStatusTone(status: string): RunStatusTone {
     case "capped":
     case "partial":
     case "skipped":
+    case "stopped":
       return "attention"
     case "failed":
       return "error"
