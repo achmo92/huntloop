@@ -19,6 +19,10 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { CompanyOut } from "@/pages/criteria/types"
+import {
+  deriveInFlight,
+  useQueuedResolutionRows,
+} from "@/pages/criteria/useResolutionQueue"
 
 /**
  * D-07/D-08: the registry is ONE list. Resolution failure is a status column
@@ -84,16 +88,28 @@ export function RegistryTable() {
   const [retrying, setRetrying] = useState<Record<string, string | null>>({})
   const [toast, setToast] = useState<string | null>(null)
 
+  // GAP-9: rows queued by any surface (CoverageCard's bulk retry, the add
+  // dialog) — must be read before the query so its interval closure sees them.
+  const queuedRows = useQueuedResolutionRows()
+
   const companiesQuery = useQuery({
     queryKey: ["companies"],
     queryFn: () => api<CompanyOut[]>("/api/companies"),
-    refetchInterval: () => (Object.keys(retrying).length > 0 ? 2000 : false),
+    refetchInterval: (query) =>
+      Object.keys(retrying).length > 0 ||
+      Object.keys(deriveInFlight(queuedRows, query.state.data ?? [])).length > 0
+        ? 2000
+        : false,
   })
 
   const companies = useMemo(
     () => companiesQuery.data ?? [],
     [companiesQuery.data]
   )
+
+  // GAP-9: pending rows show the per-row retrying affordance while a bulk
+  // retry (or the add dialog's queue) is in flight; derived state self-clears.
+  const inFlight = deriveInFlight(queuedRows, companies)
 
   useEffect(() => {
     if (!toast) return
@@ -205,7 +221,7 @@ export function RegistryTable() {
         <TableBody>
           {visible.map((company) => {
             const atsLabel = formatAts(company.ats, company.ats_identifier)
-            const isRetrying = company.id in retrying
+            const isRetrying = company.id in retrying || company.id in inFlight
             return (
               <TableRow
                 key={company.id}

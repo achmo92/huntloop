@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangleIcon, Loader2Icon, RefreshCwIcon } from "lucide-react"
 import { api, apiPost, ApiError } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +12,12 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import type { CompanyOut, CoverageOut } from "./types"
+import {
+  RESOLUTION_QUEUE_KEY,
+  deriveInFlight,
+  useQueuedResolutionRows,
+  type ResolutionQueueVars,
+} from "./useResolutionQueue"
 
 /**
  * D-06: coverage disclosure is a headline number, not a footnote. The honest
@@ -24,13 +30,32 @@ import type { CompanyOut, CoverageOut } from "./types"
  * POST /api/companies/resolve-batch, shows an in-progress state, and lets the
  * shared ["companies"] cache repaint each row as the background probes finish.
  * The action is hidden when nothing is pending (D-7b).
+ *
+ * GAP-9: the queue is tagged with RESOLUTION_QUEUE_KEY so the registry's rows
+ * show the same retrying affordance per row; the state is derived, never
+ * accumulated, so it clears as rows land.
  */
 export function CoverageCard() {
   const queryClient = useQueryClient()
-  // id -> last_checked_at at the moment the batch was queued. The probe is done
-  // once the row resolves or its last_checked_at changes; then polling stops.
-  const [retrying, setRetrying] = useState<Record<string, string | null>>({})
   const [toast, setToast] = useState<string | null>(null)
+
+  const queuedRows = useQueuedResolutionRows()
+  const queue = useMutation({
+    mutationKey: RESOLUTION_QUEUE_KEY,
+    mutationFn: (vars: ResolutionQueueVars) =>
+      apiPost("/api/companies/resolve-batch", {
+        ids: vars.rows.map((row) => row.id),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["companies"] })
+      await queryClient.invalidateQueries({ queryKey: ["coverage"] })
+    },
+    onError: (error) => {
+      setToast(
+        error instanceof ApiError ? error.detail : "Couldn't start the retry."
+      )
+    },
+  })
 
   const coverageQuery = useQuery({
     queryKey: ["coverage"],
@@ -39,7 +64,11 @@ export function CoverageCard() {
   const companiesQuery = useQuery({
     queryKey: ["companies"],
     queryFn: () => api<CompanyOut[]>("/api/companies"),
-    refetchInterval: () => (Object.keys(retrying).length > 0 ? 2000 : false),
+    refetchInterval: (query) =>
+      queue.isPending ||
+      Object.keys(deriveInFlight(queuedRows, query.state.data ?? [])).length > 0
+        ? 2000
+        : false,
   })
 
   useEffect(() => {
@@ -47,27 +76,6 @@ export function CoverageCard() {
     const timer = setTimeout(() => setToast(null), 4000)
     return () => clearTimeout(timer)
   }, [toast])
-
-  // Stop showing "Retrying…" once each probe finishes, whether it succeeded or
-  // failed again (a new last_checked_at is the signal that it ran).
-  useEffect(() => {
-    const data = companiesQuery.data
-    if (!data) return
-    setRetrying((prev) => {
-      if (Object.keys(prev).length === 0) return prev
-      const next = { ...prev }
-      let changed = false
-      for (const id of Object.keys(prev)) {
-        const company = data.find((candidate) => candidate.id === id)
-        if (!company) continue
-        if (company.resolved || company.last_checked_at !== prev[id]) {
-          delete next[id]
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [companiesQuery.data])
 
   if (coverageQuery.isLoading) {
     return (
@@ -90,25 +98,17 @@ export function CoverageCard() {
   const needingAttention = (companiesQuery.data ?? []).filter(
     (company) => !company.resolved
   )
-  const isRetryingAll = Object.keys(retrying).length > 0
+  const inFlight = deriveInFlight(queuedRows, companiesQuery.data ?? [])
+  const isRetryingAll = queue.isPending || Object.keys(inFlight).length > 0
 
-  async function retryAll() {
+  function retryAll() {
     if (needingAttention.length === 0) return
-    setRetrying(
-      Object.fromEntries(needingAttention.map((c) => [c.id, c.last_checked_at]))
-    )
-    try {
-      await apiPost("/api/companies/resolve-batch", {
-        ids: needingAttention.map((c) => c.id),
-      })
-      await queryClient.invalidateQueries({ queryKey: ["companies"] })
-      await queryClient.invalidateQueries({ queryKey: ["coverage"] })
-    } catch (error) {
-      setRetrying({})
-      setToast(
-        error instanceof ApiError ? error.detail : "Couldn't start the retry."
-      )
-    }
+    queue.mutate({
+      rows: needingAttention.map((c) => ({
+        id: c.id,
+        last_checked_at: c.last_checked_at,
+      })),
+    })
   }
 
   return (
