@@ -35,6 +35,9 @@ class Config:
     extraction_model: str
     max_employer_concurrency: int
     stale_after_empty_runs: int
+    # GAP-15: how long a RUNNING run may go without a refreshed lease before it
+    # is classified stale and reconciled. 8x the heartbeat interval (15s).
+    run_stale_after_seconds: int
     run_at: str
     timezone: str
     run_spend_cap_usd: Decimal | None
@@ -187,6 +190,7 @@ def load_config() -> Config:
 
     max_employer_concurrency = _positive_int_env("HUNTLOOP_MAX_EMPLOYER_CONCURRENCY", 5)
     stale_after_empty_runs = _positive_int_env("HUNTLOOP_STALE_AFTER_EMPTY_RUNS", 3)
+    run_stale_after_seconds = _positive_int_env("HUNTLOOP_RUN_STALE_AFTER_SECONDS", 120)
 
     run_at = os.environ.get("HUNTLOOP_RUN_AT") or "08:00"
     parse_run_at(run_at)  # fail fast at boot, not when the scheduler builds its trigger
@@ -204,6 +208,7 @@ def load_config() -> Config:
         extraction_model=extraction_model,
         max_employer_concurrency=max_employer_concurrency,
         stale_after_empty_runs=stale_after_empty_runs,
+        run_stale_after_seconds=run_stale_after_seconds,
         run_at=run_at,
         timezone=timezone,
         run_spend_cap_usd=run_spend_cap_usd,
