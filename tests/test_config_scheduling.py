@@ -107,14 +107,16 @@ class TestRunEnums:
     def test_new_members_exist_with_exact_values(self):
         assert RunStatus.SKIPPED.value == "skipped"
         assert RunStatus.CAPPED.value == "capped"
+        # Phase 4 GAP-4: a manual stop is a first-class terminal fact.
+        assert RunStatus.STOPPED.value == "stopped"
         assert RunTrigger.CATCH_UP.value == "catch_up"
 
     def test_rendered_enum_lengths_unchanged(self):
         # SQLAlchemy's non-native Enum renders VARCHAR(max(len(name))). Today's
-        # maxima are RUNNING/PARTIAL=7 and SCHEDULED=9; the new names (SKIPPED=7,
-        # CAPPED=6, CATCH_UP=8) fit within them, so no column type changes and
-        # no migration is required. This guard keeps a future rename from
-        # silently requiring one.
+        # maxima are RUNNING/PARTIAL/SKIPPED/STOPPED=7 and SCHEDULED=9; the new
+        # names (SKIPPED=7, CAPPED=6, STOPPED=7, CATCH_UP=8) fit within them, so
+        # no column type changes and no migration is required. This guard keeps
+        # a future rename from silently requiring one.
         assert sqlalchemy.Enum(RunStatus, native_enum=False).length == 7
         assert sqlalchemy.Enum(RunTrigger, native_enum=False).length == 9
 
