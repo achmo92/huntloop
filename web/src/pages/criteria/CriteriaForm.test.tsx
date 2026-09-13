@@ -1,8 +1,9 @@
 import type { ComponentProps } from "react"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { api } from "@/lib/api"
 import {
   CriteriaForm,
   toFormValues,
@@ -65,6 +66,14 @@ function valuesWith(overrides: Partial<CriteriaFormValues>): CriteriaFormValues 
   return { ...toFormValues(REPRESENTATIVE), ...overrides }
 }
 
+const mockedApi = vi.mocked(api)
+
+const COMPANIES = [
+  { id: "1", name: "Acme Corp" },
+  { id: "2", name: "Globex" },
+  { id: "3", name: "Initech" },
+]
+
 function renderForm(props: Partial<ComponentProps<typeof CriteriaForm>> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -125,6 +134,10 @@ describe("CriteriaForm bounded fields (GAP-2)", () => {
           eligible_regions: [],
           preferred_cities: [],
         },
+        work_authorization: {
+          countries_authorized: [],
+          requires_sponsorship: false,
+        },
       }),
     })
 
@@ -172,6 +185,11 @@ describe("CriteriaForm bounded fields (GAP-2)", () => {
     const user = userEvent.setup()
     renderForm({
       defaultValues: valuesWith({
+        locations: {
+          eligible_countries: [],
+          eligible_regions: [],
+          preferred_cities: [],
+        },
         work_authorization: { countries_authorized: [], requires_sponsorship: false },
       }),
     })
@@ -204,5 +222,67 @@ describe("CriteriaForm bounded fields (GAP-2)", () => {
     expect(
       await screen.findByText("Use a 3-letter code like USD or EUR")
     ).toBeInTheDocument()
+  })
+})
+
+describe("CriteriaForm employer typeahead (GAP-2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("surfaces prefix suggestions from the shared companies registry", async () => {
+    const user = userEvent.setup()
+    mockedApi.mockImplementation(async (path) => {
+      if (path === "/api/companies") return COMPANIES
+      throw new Error(`unexpected GET ${path}`)
+    })
+    renderForm({ defaultValues: REPRESENTATIVE })
+
+    await user.type(screen.getByLabelText("Add an excluded employer"), "aci")
+
+    expect(
+      await screen.findByRole("option", { name: "Acme Corp" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("option", { name: "Globex" })
+    ).not.toBeInTheDocument()
+  })
+
+  it("reads suggestions from the shared ['companies'] query cache once", async () => {
+    mockedApi.mockResolvedValue(COMPANIES)
+    renderForm({ defaultValues: REPRESENTATIVE })
+
+    await waitFor(() => expect(mockedApi).toHaveBeenCalledWith("/api/companies"))
+    expect(
+      mockedApi.mock.calls.filter((call) => call[0] === "/api/companies")
+    ).toHaveLength(1)
+  })
+
+  it("commits an employer outside the registry as free text", async () => {
+    const user = userEvent.setup()
+    mockedApi.mockResolvedValue(COMPANIES)
+    renderForm({ defaultValues: REPRESENTATIVE })
+
+    await user.type(
+      screen.getByLabelText("Add an excluded employer"),
+      "Startup X{Enter}"
+    )
+
+    expect(
+      screen.getByRole("button", { name: "Remove Startup X" })
+    ).toBeInTheDocument()
+  })
+
+  it("renders no suggestions when the registry is empty", async () => {
+    const user = userEvent.setup()
+    mockedApi.mockResolvedValue([])
+    renderForm({ defaultValues: REPRESENTATIVE })
+
+    await user.type(screen.getByLabelText("Add an excluded employer"), "aci")
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("option", { name: "Acme Corp" })
+    ).not.toBeInTheDocument()
   })
 })
