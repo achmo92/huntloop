@@ -25,6 +25,7 @@ from huntloop.discovery.crawl.careers import crawl_careers, load_crawl_hash, sav
 from huntloop.discovery.crawl.extract import extract_listings, to_fetch_result
 from huntloop.discovery.dedup import compute_dedup_key, DedupKeyError
 from huntloop.discovery.write import write_batch
+from huntloop.graph.cancellation import RunStoppedByUser, is_stop_requested
 from huntloop.graph.state import EmployerResult
 from huntloop.registry.staleness import record_fetch_outcome
 from huntloop.scoring.filters import apply_deterministic_filters
@@ -96,6 +97,17 @@ def run_status(results: list[EmployerResult]) -> RunStatus:
     return RunStatus.SUCCESS
 
 
+def _raise_if_stop_requested(sessionmaker: sessionmaker, run_id: str) -> None:
+    """GAP-4 cooperative cancellation: raise when a stop for this run is pending.
+
+    Called only at employer/stage boundaries — a stop is honored promptly (at
+    the next safe point), never mid model call. The run is interrupted, not the
+    employer failed, so the exception must escape ``process_employer``.
+    """
+    if is_stop_requested(sessionmaker, run_id):
+        raise RunStoppedByUser()
+
+
 def process_employer(
     state,
     *,
@@ -124,6 +136,10 @@ def process_employer(
     }
     stage = "load"
     try:
+        # GAP-4: between employers — a stop requested before this employer
+        # starts is honored before any work, including the Company lookup.
+        if is_stop_requested(sessionmaker, state["run_id"]):
+            raise RunStoppedByUser()
         company = session.get(Company, uuid.UUID(state["company_id"]))
         if company is None:
             raise LookupError(f"company {state['company_id']} not found")
@@ -136,6 +152,10 @@ def process_employer(
             extraction_model=extraction_model,
         )
         result["path"] = path
+
+        # GAP-4: between stages — a stop requested while fetching is honored
+        # before any scoring/writing work begins.
+        _raise_if_stop_requested(sessionmaker, state["run_id"])
 
         # REG-05: the real FetchResult on every path -- the crawl path feeds it
         # through to_fetch_result so the empty-vs-error distinction is identical.
@@ -179,6 +199,12 @@ def process_employer(
         result["failed"] += outcome.failed
 
         session.commit()
+    except RunStoppedByUser:
+        # GAP-4: a user stop is NOT an employer failure. Re-raise so it escapes
+        # the DISC-03 broad except below — a swallowed stop would let the run
+        # keep going through every remaining employer and silently defeat the
+        # feature. The graph's RetryPolicy is configured never to retry it.
+        raise
     except Exception as exc:
         # DISC-03: catch, attribute to THIS employer, keep going. See docstring.
         session.rollback()

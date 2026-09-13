@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from decimal import Decimal
 
 import pytest
 import sqlalchemy
@@ -27,8 +26,7 @@ from huntloop.criteria.schema import (
     LocationCriteria,
 )
 from huntloop.db.base import make_session_factory
-from huntloop.db.models import Company, Run, RunStatus, RunTrigger
-from huntloop.db.repository import RunRepository
+from huntloop.db.models import Company, Run, RunStatus
 from huntloop.discovery.ats.base import FetchResult, FetchStatus, RawListing
 from huntloop.graph.build import run_discovery
 from huntloop.scheduler.jobs import find_run_in_progress
@@ -151,9 +149,10 @@ class _RecordingClient:
             choice = Choice(message=Message(content=json.dumps(resp)))
 
             class FakeCompletion:
-                choices = [choice]
-                usage = Usage(prompt_tokens=10, completion_tokens=20)
-                model = kwargs.get("model", "fake-model")
+                def __init__(self) -> None:
+                    self.choices = [choice]
+                    self.usage = Usage(prompt_tokens=10, completion_tokens=20)
+                    self.model = kwargs.get("model", "fake-model")
 
             return FakeCompletion()
 
@@ -216,13 +215,13 @@ def test_stopped_status_is_a_member_fitting_the_column():
 
 
 def test_request_stop_marks_only_the_named_run(sessionmaker):
+    from huntloop.db.repository import SettingsRepository
     from huntloop.graph.cancellation import (
         STOP_REQUEST_SETTING_KEY,
         clear_stop_request,
         is_stop_requested,
         request_stop,
     )
-    from huntloop.db.repository import SettingsRepository
 
     run_a = uuid.uuid4()
     run_b = uuid.uuid4()

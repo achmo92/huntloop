@@ -182,6 +182,11 @@ class RunStatus(str, enum.Enum):
     # reached. Deliberately NOT reused as SUCCESS/PARTIAL + error_summary — a
     # guardrail firing is not the same fact as something going wrong.
     CAPPED = "capped"
+    # GAP-4: the user stopped the run. Human intervention is a first-class
+    # terminal fact, like SKIPPED/CAPPED — never a disguised FAILED. "stopped"
+    # is 7 chars, within the rendered run_status VARCHAR length, so this is
+    # schema-neutral (Phase 3 enum-extension precedent; no migration).
+    STOPPED = "stopped"
 
 
 class StatusEventSource(str, enum.Enum):

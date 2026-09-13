@@ -26,6 +26,7 @@ from huntloop.db.models import Company, Job, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
 from huntloop.discovery.ats.base import make_client
 from huntloop.discovery.fetch.page import RenderedPageFetcher, StaticPageFetcher
+from huntloop.graph.cancellation import RunStoppedByUser, clear_stop_request
 from huntloop.graph.state import DiscoveryState
 from huntloop.graph.nodes import (
     fan_out_to_employers,
@@ -87,6 +88,16 @@ def _route_from_load(state) -> list[Send] | list[str]:
     return sends if sends else ["finalize_run"]
 
 
+def _retry_unless_stopped(exc: Exception) -> bool:
+    """GAP-4: never retry a user stop.
+
+    ``process_employer`` carries a RetryPolicy for transient branch failures.
+    A ``RunStoppedByUser`` is not transient — retrying it would delay the stop
+    by the retry budget and re-enter an employer the user asked to stop.
+    """
+    return not isinstance(exc, RunStoppedByUser)
+
+
 def build_graph(
     *,
     sessionmaker: sessionmaker,
@@ -127,7 +138,7 @@ def build_graph(
             scoring_model=scoring_model,
             extraction_model=extraction_model,
         ),
-        retry_policy=RetryPolicy(max_attempts=3),
+        retry_policy=RetryPolicy(max_attempts=3, retry_on=_retry_unless_stopped),
     )
 
     builder.add_node(
@@ -283,6 +294,56 @@ def run_discovery(
         )
 
         return summary
+
+    except RunStoppedByUser:
+        # 6. GAP-4: the user stopped this run. Finalize honestly as STOPPED with
+        # the real SpendTracker ledger (the crashed-run discipline: money spent
+        # is money spent) but zero pipeline counters — the graph was aborted at
+        # a boundary, so no final aggregate exists. Clearing the marker keeps a
+        # later run from inheriting the stop and the next scheduled fire from
+        # being blocked (the overlap guard keys on the RUNNING Run row, now
+        # terminal).
+        session = sessionmaker()
+        try:
+            RunRepository(session).finish(
+                run_id,
+                status=RunStatus.STOPPED,
+                companies_checked=0,
+                listings_fetched=0,
+                after_dedup=0,
+                after_deterministic=0,
+                after_triage=0,
+                scored=0,
+                new_jobs_written=0,
+                tokens_in=spend_tracker.tokens_in,
+                tokens_out=spend_tracker.tokens_out,
+                cost_usd=spend_tracker.spent_usd,
+                error_summary="stopped by user request",
+            )
+            clear_stop_request(session)
+            session.commit()
+        finally:
+            session.close()
+        # A clean return: the API daemon thread and the scheduler both tolerate
+        # it, and returning keeps the scheduler from logging a user stop as a
+        # failure.
+        return RunSummary(
+            run_id=str(run_id),
+            companies_checked=0,
+            listings_fetched=0,
+            after_dedup=0,
+            after_deterministic=0,
+            after_triage=0,
+            scored=0,
+            new_jobs_written=0,
+            updated=0,
+            failed=0,
+            tokens_in=spend_tracker.tokens_in,
+            tokens_out=spend_tracker.tokens_out,
+            cost_usd=spend_tracker.spent_usd,
+            errors=(),
+            status=RunStatus.STOPPED.value,
+        )
 
     except Exception as exc:
         # 6. A crashed run must not leave a row stuck in 'running' forever.
