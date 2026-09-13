@@ -39,7 +39,7 @@ const GLOBEX_PENDING: CompanyOut = {
   careers_url: null,
   enabled: true,
   resolved: false,
-  resolution_status: "needs_attention",
+  resolution_state: "error",
   resolution_detail: "We couldn't find a supported job board for this employer.",
   possibly_stale: false,
   staleness_message: null,
@@ -53,7 +53,7 @@ const GLOBEX_RESOLVED: CompanyOut = {
   ats: "greenhouse",
   ats_identifier: "globex",
   resolved: true,
-  resolution_status: "resolved",
+  resolution_state: "resolved",
   resolution_detail: null,
   last_checked_at: "2026-09-13T10:00:00Z",
 }

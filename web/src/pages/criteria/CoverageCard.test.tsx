@@ -38,7 +38,7 @@ const GLOBEX: CompanyOut = {
   careers_url: null,
   enabled: true,
   resolved: false,
-  resolution_status: "needs_attention",
+  resolution_state: "error",
   resolution_detail: "No job board found",
   possibly_stale: false,
   staleness_message: null,
@@ -55,7 +55,7 @@ const ACME: CompanyOut = {
   careers_url: null,
   enabled: true,
   resolved: true,
-  resolution_status: "resolved",
+  resolution_state: "resolved",
   resolution_detail: null,
   possibly_stale: false,
   staleness_message: null,
@@ -113,6 +113,31 @@ describe("CoverageCard retry action (GAP-7)", () => {
       watchable: 2,
       needs_attention: 1,
       resolved: 2,
+    })
+    mockedApiPost.mockResolvedValue(undefined)
+    renderCard(makeClient())
+
+    await user.click(await screen.findByRole("button", { name: /retry all/i }))
+
+    expect(mockedApiPost).toHaveBeenCalledWith(
+      "/api/companies/resolve-batch",
+      { ids: ["1"] }
+    )
+  })
+
+  it("excludes an employer already resolving from the retry-all list", async () => {
+    const user = userEvent.setup()
+    const resolving: CompanyOut = {
+      ...GLOBEX,
+      id: "3",
+      name: "Hooli",
+      resolution_state: "resolving",
+    }
+    mockCoverage([GLOBEX, resolving, ACME], {
+      added: 3,
+      watchable: 1,
+      needs_attention: 2,
+      resolved: 1,
     })
     mockedApiPost.mockResolvedValue(undefined)
     renderCard(makeClient())
