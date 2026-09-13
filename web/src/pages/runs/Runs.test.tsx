@@ -1,5 +1,5 @@
 import type { ReactElement } from "react"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
@@ -98,6 +98,24 @@ const STOPPED: RunOut = {
 const STOPPED_DETAIL: RunDetailData = {
   ...STOPPED,
   after_dedup: 12,
+  errors: [],
+}
+
+// Exact server text (GRACE_EXPIRED_STOP_REASON in src/huntloop/db/run_liveness.py).
+const GRACE_REASON =
+  "stopped: the run did not reach its next safe boundary within the stop grace period"
+
+const STOPPED_GRACE: RunOut = {
+  ...SUCCESS,
+  id: "run-grace",
+  status: "stopped",
+  new_jobs_written: 0,
+  error_summary: GRACE_REASON,
+}
+
+const STOPPED_GRACE_DETAIL: RunDetailData = {
+  ...STOPPED_GRACE,
+  after_dedup: 0,
   errors: [],
 }
 
@@ -218,6 +236,8 @@ describe("Runs", () => {
     expect(apiPost).toHaveBeenCalledWith("/api/runs/run-running/stop", {})
     const pending = screen.getByRole("button", { name: /stopping/i })
     expect(pending).toBeDisabled()
+    // GAP-16: while in flight the control states the honest expectation.
+    expect(pending.getAttribute("title")).toMatch(/next safe step/i)
     // Clicking Stop must not also open the detail sheet.
     expect(screen.queryByText("Run detail")).not.toBeInTheDocument()
 
@@ -296,5 +316,54 @@ describe("Runs", () => {
     expect(
       within(dialog).getByText(/run interrupted: the process ended before the run completed/)
     ).toBeInTheDocument()
+  })
+
+  it("polls while ANY row is running so a non-newest row flips to Stopped (GAP-16)", async () => {
+    vi.useFakeTimers()
+    try {
+      let call = 0
+      mockedApi.mockImplementation(async (path) => {
+        if (path === "/api/runs?limit=50") {
+          call += 1
+          return call === 1 ? [SUCCESS, RUNNING] : [SUCCESS, STOPPED]
+        }
+        throw new Error(`unexpected GET ${path}`)
+      })
+
+      renderWithProviders(<Runs />)
+
+      // Flush the initial query, then let one 3s poll interval fire.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(screen.getByText("Running")).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3100)
+      })
+      // The row reached its terminal fact without a manual refresh.
+      expect(screen.getByText("Stopped")).toBeInTheDocument()
+      expect(screen.queryByText("Running")).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("renders a grace-finalized run as an attention Stopped fact with its reason (GAP-16)", async () => {
+    const user = userEvent.setup()
+    mockApi([STOPPED_GRACE], STOPPED_GRACE_DETAIL)
+    renderWithProviders(<Runs />)
+
+    expect(await screen.findByText("Stopped")).toBeInTheDocument()
+    const badge = screen.getByTestId("run-status-stopped")
+    expect(badge).toHaveAttribute("data-tone", "attention")
+    // A terminal run offers no Stop control.
+    expect(
+      screen.queryByRole("button", { name: "Stop" })
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getAllByRole("row")[1])
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByText(GRACE_REASON)).toBeInTheDocument()
   })
 })
