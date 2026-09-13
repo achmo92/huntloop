@@ -201,3 +201,59 @@ def test_trigger_with_run_in_progress_is_409(client, make_session):
     body = resp.json()
     assert body["run_id"] == str(run_id)
     assert "in progress" in body["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/runs/{id}/stop — manual stop (GAP-4)
+# ---------------------------------------------------------------------------
+
+
+def test_stop_running_run_returns_202_and_writes_marker(client, make_session):
+    from huntloop.db.repository import SettingsRepository
+    from huntloop.graph.cancellation import STOP_REQUEST_SETTING_KEY
+
+    session = make_session()
+    try:
+        run = RunRepository(session).start(RunTrigger.MANUAL)
+        session.commit()
+        run_id = run.id
+    finally:
+        session.close()
+
+    resp = client.post(f"/api/runs/{run_id}/stop")
+    assert resp.status_code == 202
+    assert resp.json() == {"status": "stop requested"}
+
+    # The marker is committed with the response, so the run path in another
+    # process/thread observes it (the request itself never blocks).
+    session = make_session()
+    try:
+        marker = SettingsRepository(session).get_value(STOP_REQUEST_SETTING_KEY)
+        assert marker == str(run_id)
+    finally:
+        session.close()
+
+
+def test_stop_finished_run_is_409_naming_terminal_status(client, make_session):
+    from huntloop.db.models import RunStatus
+
+    session = make_session()
+    try:
+        run = RunRepository(session).start(RunTrigger.MANUAL)
+        _finish(session, run.id, status=RunStatus.SUCCESS)
+        session.commit()
+        run_id = run.id
+    finally:
+        session.close()
+
+    resp = client.post(f"/api/runs/{run_id}/stop")
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "already finished" in detail
+    assert "success" in detail
+
+
+def test_stop_unknown_run_is_404(client):
+    resp = client.post(f"/api/runs/{uuid.uuid4()}/stop")
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "run not found"}
