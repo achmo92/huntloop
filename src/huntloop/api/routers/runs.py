@@ -24,9 +24,10 @@ from sqlalchemy.orm import Session
 from huntloop.api.background import run_in_background
 from huntloop.api.deps import get_session
 from huntloop.db.base import get_engine, make_session_factory
-from huntloop.db.models import Company, Run, RunError, RunTrigger
+from huntloop.db.models import Company, Run, RunError, RunStatus, RunTrigger
 from huntloop.db.repository import RunRepository
 from huntloop.graph.build import run_discovery
+from huntloop.graph.cancellation import request_stop
 from huntloop.scheduler.jobs import find_run_in_progress
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -188,3 +189,37 @@ def trigger_run(session: Session = Depends(get_session)):
 
     run_in_background(_run_manual_discovery)
     return TriggerOut(status="accepted")
+
+
+@router.post("/{run_id}/stop", status_code=202, response_model=TriggerOut)
+def stop_run(run_id: uuid.UUID, session: Session = Depends(get_session)):
+    """Request a cooperative stop of a live run (GAP-4).
+
+    The POST returns 202 the moment the request is recorded and NEVER blocks on
+    the run: the run path (API daemon thread or scheduler) observes the marker
+    at its next employer/stage boundary and finishes the Run as ``STOPPED``;
+    the UI's existing poll of ``GET /api/runs`` carries the row to terminal.
+
+    There is deliberately no process-level kill — the stop is cooperative by
+    design, so a run mid-LLM-call finishes that call and stops at the next safe
+    boundary. A run already at a terminal status is a rare race (the UI only
+    offers Stop on in-progress rows), answered 409 naming that status rather
+    than pretending to stop it.
+    """
+    run = RunRepository(session).get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    if run.status != RunStatus.RUNNING:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": f"run already finished with status {run.status.value}"
+            },
+        )
+
+    request_stop(session, run_id)
+    # Commit with the response: the marker must be durable for the run path
+    # (a different process) to observe it.
+    session.commit()
+    return TriggerOut(status="stop requested")
