@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
@@ -146,6 +146,19 @@ describe("AppShell mobile drawer", () => {
     expect(active).toHaveLength(1)
     expect(active[0]).toHaveAccessibleName("Listings")
     expect(trigger).toHaveAttribute("aria-expanded", "true")
+  })
+
+  it("closes the drawer once a section is chosen", async () => {
+    const user = userEvent.setup()
+    const { router } = renderShell("/")
+
+    await user.click(screen.getByRole("button", { name: "Open navigation" }))
+    const drawer = await screen.findByRole("dialog")
+
+    await user.click(within(drawer).getAllByRole("link", { name: "Runs" })[0])
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    expect(router.state.location.pathname).toBe("/runs")
   })
 })
 
