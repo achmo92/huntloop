@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
 from huntloop.db.repository import CompanyRepository
+from huntloop.fetching.url_guard import UnsafeUrlError, assert_fetch_url_allowed
 
 CAREERS_PATH_HINTS: tuple[str, ...] = (
     "career", "careers", "jobs", "job", "join-us", "join_us", "openings",
@@ -180,6 +181,12 @@ def crawl_careers(
     of being silently swallowed as a fetch failure.
     """
     # 1. Fetch base_url
+    # T-04-03: refuse an unsafe base URL before contacting the fetcher at all.
+    try:
+        assert_fetch_url_allowed(base_url)
+    except UnsafeUrlError as exc:
+        return CrawlResult(base_url, reason=f"blocked unsafe URL: {exc}")
+
     try:
         result = fetcher.fetch(base_url)
     except Exception as exc:
@@ -257,6 +264,9 @@ def crawl_careers(
 
         visited.add(_normalize(link))
         try:
+            # T-04-03: each followed link is re-validated; an unsafe one is
+            # skipped (the except below already swallows the UnsafeUrlError).
+            assert_fetch_url_allowed(link)
             link_fetcher = rendered_fetcher if rendered else fetcher
             if link_fetcher is None:
                 link_fetcher = fetcher

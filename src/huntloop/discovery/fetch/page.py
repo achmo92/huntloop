@@ -9,15 +9,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import urljoin
 
 import httpx
 
 from huntloop.discovery.ats.base import DEFAULT_HEADERS, DEFAULT_TIMEOUT
+from huntloop.fetching.url_guard import UnsafeUrlError, assert_fetch_url_allowed
 
 # Maximum HTML body retained in memory per fetch.  5 MiB is enough for the largest
 # server-rendered careers page observed in research (Ramp, ~4.2 MiB), small enough
 # that a pathological page cannot exhaust memory during a fan-out run.
 MAX_HTML_BYTES = 5 * 1024 * 1024
+
+# T-04-03: redirects are followed manually so every hop can be re-validated
+# against the SSRF guard. A small cap keeps a redirect loop bounded.
+_MAX_REDIRECTS = 5
 
 # Descriptive user-agent used by BOTH fetchers — employer sites should see why they
 # are being visited. No Authorization header. No cookies. No credential of any kind
@@ -47,6 +53,27 @@ class PageFetcher(Protocol):
     def fetch(self, url: str) -> PageResult: ...
 
 
+def _get_with_safe_redirects(client: httpx.Client, url: str) -> httpx.Response:
+    """GET ``url``, following redirects manually with the guard on every hop.
+
+    ``follow_redirects=False`` per request overrides a client built with
+    ``follow_redirects=True`` (the injected test client), so the guard sees each
+    intermediate URL before it is requested — a redirect to a metadata/private
+    address is refused and that address is never contacted. Raises
+    :class:`~huntloop.fetching.url_guard.UnsafeUrlError` on a blocked hop or
+    when the hop cap is exceeded.
+    """
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        assert_fetch_url_allowed(current)
+        response = client.get(current, follow_redirects=False)
+        if response.is_redirect and "location" in response.headers:
+            current = urljoin(str(response.url), response.headers["location"])
+            continue
+        return response
+    raise UnsafeUrlError("too many redirects")
+
+
 class StaticPageFetcher:
     """Synchronous httpx-based HTML fetcher (Tier 2 pass).
 
@@ -67,7 +94,13 @@ class StaticPageFetcher:
 
     def fetch(self, url: str) -> PageResult:
         try:
-            response = self._client.get(url)
+            response = _get_with_safe_redirects(self._client, url)
+        except UnsafeUrlError as exc:
+            return PageResult(
+                ok=False,
+                url=url,
+                error=f"blocked unsafe URL: {exc}",
+            )
         except httpx.HTTPError as exc:
             return PageResult(
                 ok=False,
@@ -113,6 +146,13 @@ class RenderedPageFetcher:
         self.wait_until = wait_until
 
     def fetch(self, url: str) -> PageResult:
+        # T-04-03: guard BEFORE the lazy Playwright import, so an unsafe URL is
+        # refused with a normal PageResult even when the browser is absent.
+        try:
+            assert_fetch_url_allowed(url)
+        except UnsafeUrlError as exc:
+            return PageResult(ok=False, url=url, error=f"blocked unsafe URL: {exc}")
+
         # Lazy import — Playwright is optional.  The whole test suite runs without it.
         try:
             from playwright.sync_api import sync_playwright  # noqa: PLC0415
@@ -132,6 +172,11 @@ class RenderedPageFetcher:
                             page.goto(url, wait_until=self.wait_until, timeout=self.timeout_ms)
                             html = page.content()
                             final_url = page.url
+                            # T-04-03: Playwright cannot intercept per-hop
+                            # redirects, so the final URL is the boundary and
+                            # this is best-effort. A blocked final URL is
+                            # reported as a non-ok PageResult below.
+                            assert_fetch_url_allowed(final_url)
                         except Exception as exc:
                             error_msg = str(exc)
                             if "timeout" in error_msg.lower():

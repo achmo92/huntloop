@@ -25,6 +25,7 @@ from huntloop.api.deps import get_session
 from huntloop.db.models import AtsPlatform, Company
 from huntloop.db.repository import CompanyRepository
 from huntloop.discovery.ats.registry import ADAPTERS
+from huntloop.fetching.url_guard import UnsafeUrlError, assert_fetch_url_allowed
 from huntloop.registry.resolve import build_manual_resolution_config, mark_resolving
 from huntloop.registry.staleness import is_possibly_stale, staleness_message
 
@@ -42,6 +43,26 @@ RESOLUTION_FAILURE_MESSAGE = (
     "We couldn't find a supported job board for this employer automatically. "
     "Retry, or set the job board manually."
 )
+
+
+def _validate_careers_url(url: str | None) -> str | None:
+    """T-04-03: refuse a user-supplied URL that targets the host's own network.
+
+    Returns the stripped value to persist (or ``None``), raising 422 when the
+    SSRF guard rejects the target. Applied at manual board entry, single add,
+    and batch add.
+    """
+    if url is None or not url.strip():
+        return None
+    value = url.strip()
+    candidate = value if "://" in value else f"https://{value}"
+    try:
+        assert_fetch_url_allowed(candidate)
+    except UnsafeUrlError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"careers_url is not allowed: {exc}"
+        ) from exc
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +246,7 @@ def add_company(
     step via POST /{id}/resolve or POST /resolve-batch.
     """
     repo = CompanyRepository(session)
-    repo.upsert_by_name(body.name, careers_url=body.careers_url)
+    repo.upsert_by_name(body.name, careers_url=_validate_careers_url(body.careers_url))
     session.commit()
     return _company_to_out(repo.get_by_name(body.name))
 
@@ -242,7 +263,7 @@ def add_batch(
     repo = CompanyRepository(session)
     urls = body.careers_urls or {}
     for name in body.names:
-        repo.upsert_by_name(name, careers_url=urls.get(name))
+        repo.upsert_by_name(name, careers_url=_validate_careers_url(urls.get(name)))
     session.commit()
     added = [_company_to_out(c) for name in body.names if (c := repo.get_by_name(name))]
     return BatchCreated(added=added)
@@ -335,7 +356,7 @@ def patch_company(
         company.ats = AtsPlatform(platform)
         company.ats_identifier = identifier
         if "careers_url" in data:
-            company.careers_url = (data["careers_url"] or "").strip() or None
+            company.careers_url = _validate_careers_url(data["careers_url"])
         company.ats_config = build_manual_resolution_config(
             platform=platform,
             identifier=identifier,
@@ -343,7 +364,7 @@ def patch_company(
         )
         company.resolved_at = datetime.now(UTC)
     elif "careers_url" in data:
-        company.careers_url = (data["careers_url"] or "").strip() or None
+        company.careers_url = _validate_careers_url(data["careers_url"])
     session.commit()
     return _company_to_out(company)
 

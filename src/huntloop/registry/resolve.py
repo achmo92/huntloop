@@ -28,6 +28,7 @@ import httpx
 from huntloop.db.models import AtsPlatform
 from huntloop.discovery.ats.registry import ADAPTERS
 from huntloop.discovery.fetch.page import PageFetcher, RendererUnavailable, StaticPageFetcher
+from huntloop.fetching.url_guard import assert_fetch_url_allowed
 from huntloop.registry.probe import ProbeResult, guess_slugs, probe_slug
 from huntloop.registry.signatures import SlugCandidate, sweep_signatures
 
@@ -187,6 +188,11 @@ def resolve_employer(
     normalised_url: str | None = None
     if careers_url is not None:
         normalised_url = _normalise_url(careers_url)
+        # T-04-03: refuse a user-supplied URL that targets the host's own
+        # network before any Tier-2/3 fetch. Deliberately not caught here —
+        # fail closed (the CLI's _register_one and the background resolver both
+        # already catch Exception, so this surfaces as an error state).
+        assert_fetch_url_allowed(normalised_url)
 
     # ----- Tier 2: static HTML sweep -----------------------------------------
     if normalised_url is not None:
