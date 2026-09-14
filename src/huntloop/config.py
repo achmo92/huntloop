@@ -45,7 +45,26 @@ class Config:
     run_stop_grace_seconds: int
     run_at: str
     timezone: str
+    # T-04-02: browser-origin / DNS-rebinding boundary. `allowed_hosts` is the
+    # hostname allowlist for the web surface (bare IP-literal hosts are always
+    # accepted by LANTrustedHostMiddleware); `allowed_origins` is the exact
+    # origin escape hatch for proxies that rewrite Host. Both from HUNTLOOP_*.
+    allowed_hosts: tuple[str, ...]
+    allowed_origins: tuple[str, ...]
     run_spend_cap_usd: Decimal | None
+
+
+def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Parse a comma-separated env var into a lowercased tuple of values.
+
+    Unset or blank falls back to ``default`` so an empty string never silently
+    disables the entire allowlist.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    values = tuple(value.strip().lower() for value in raw.split(",") if value.strip())
+    return values or default
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -201,6 +220,10 @@ def load_config() -> Config:
     run_at = os.environ.get("HUNTLOOP_RUN_AT") or "08:00"
     parse_run_at(run_at)  # fail fast at boot, not when the scheduler builds its trigger
     timezone = _timezone_env("HUNTLOOP_TIMEZONE", "UTC")
+    allowed_hosts = _csv_env(
+        "HUNTLOOP_ALLOWED_HOSTS", ("localhost", "127.0.0.1", "testserver")
+    )
+    allowed_origins = _csv_env("HUNTLOOP_ALLOWED_ORIGINS", ())
     run_spend_cap_usd = _optional_positive_decimal_env("HUNTLOOP_RUN_SPEND_CAP_USD")
 
     return Config(
@@ -218,6 +241,8 @@ def load_config() -> Config:
         run_stop_grace_seconds=run_stop_grace_seconds,
         run_at=run_at,
         timezone=timezone,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
         run_spend_cap_usd=run_spend_cap_usd,
     )
 

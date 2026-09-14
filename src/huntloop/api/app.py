@@ -6,9 +6,10 @@ plans only add routes to files they own, and it conditionally serves the
 built React frontend from web/dist when that directory exists (plan 04-11
 fills it; tests and bare-backend runs never require a frontend build).
 
-No cross-origin middleware by design: the frontend is served same-origin
-from this app in production and via a Vite dev proxy in development
-(private-network, no-auth — PROJECT.md delivery constraints).
+The private-network, no-auth design is preserved (no authentication is added),
+but the browser is treated as the boundary: `create_app` installs a fail-closed
+same-origin check for state-changing requests and a Host allowlist that still
+accepts bare IP-literal LAN hosts (T-04-02, plan 04-26).
 """
 
 from pathlib import Path
@@ -29,6 +30,8 @@ from huntloop.api.routers import (
     runs,
     settings,
 )
+from huntloop.api.security import LANTrustedHostMiddleware, SameOriginMiddleware
+from huntloop.config import load_config
 
 
 class SPAStaticFiles(StaticFiles):
@@ -62,7 +65,14 @@ class SPAStaticFiles(StaticFiles):
 
 
 def create_app() -> FastAPI:
+    cfg = load_config()
     app = FastAPI(title="HuntLoop API")
+
+    # T-04-02: add same-origin first, then host, so the LAST-added middleware
+    # (LANTrustedHostMiddleware) is outermost and a bad Host is rejected before
+    # the Origin comparison runs. Both apply to the SPA mount as well as /api.
+    app.add_middleware(SameOriginMiddleware, allowed_origins=list(cfg.allowed_origins))
+    app.add_middleware(LANTrustedHostMiddleware, allowed_hosts=list(cfg.allowed_hosts))
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
