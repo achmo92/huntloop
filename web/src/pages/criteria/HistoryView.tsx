@@ -5,6 +5,7 @@ import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Skeleton } from "@/components/ui/skeleton"
 import type { CriteriaVersionWire } from "./types"
 
 /**
@@ -88,7 +89,22 @@ export function HistoryView() {
   }
 
   if (query.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading history…</p>
+    return (
+      <div className="grid gap-5">
+        <span role="status" className="sr-only">
+          Loading history…
+        </span>
+        <div className="grid gap-2">
+          <Skeleton className="h-14 w-full rounded-xl" />
+          <Skeleton className="h-14 w-full rounded-xl" />
+          <Skeleton className="h-14 w-full rounded-xl" />
+        </div>
+        <div className="grid gap-2">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-16 w-full rounded-lg" />
+        </div>
+      </div>
+    )
   }
 
   if (versions.length === 0) {
@@ -114,7 +130,7 @@ export function HistoryView() {
           <li
             key={version.version}
             className={cn(
-              "flex items-center gap-3 rounded-xl border p-3 shadow-xs transition-colors",
+              "flex items-center gap-3 rounded-xl border p-3 transition-colors",
               selected.includes(version.version)
                 ? "border-primary/40 bg-primary/5"
                 : "border-border bg-card hover:border-foreground/20"

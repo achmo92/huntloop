@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { CheckCircle2Icon, HistoryIcon } from "lucide-react"
 import { api, apiPost } from "@/lib/api"
 import { Button } from "@/components/ui/button"
+import { PageHeader } from "@/components/PageHeader"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Sheet,
   SheetContent,
@@ -76,25 +78,29 @@ export default function Criteria() {
 
   if (criteriaQuery.isLoading) {
     return (
-      <p className="text-sm text-muted-foreground">Loading your criteria…</p>
+      <div className="mx-auto grid max-w-3xl gap-8">
+        <span role="status" className="sr-only">
+          Loading your criteria…
+        </span>
+        <div className="grid gap-2">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-4 w-72" />
+        </div>
+        <Skeleton className="h-40 w-full rounded-xl" />
+        <Skeleton className="h-72 w-full rounded-xl" />
+      </div>
     )
   }
 
   return (
-    <div className="mx-auto grid max-w-3xl gap-7">
-      <header className="grid gap-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
-              {inSetup ? "Set up your search" : "Your criteria"}
-            </h1>
-            {!inSetup && current ? (
-              <p className="mt-1.5 text-sm text-muted-foreground tabular-nums">
-                v{current.version} of {total}
-              </p>
-            ) : null}
-          </div>
-          {!inSetup ? (
+    <div className="mx-auto grid max-w-3xl gap-8">
+      <PageHeader
+        title={inSetup ? "Set up your search" : "Your criteria"}
+        description={
+          !inSetup && current ? `v${current.version} of ${total}` : undefined
+        }
+        actions={
+          !inSetup ? (
             <Button
               type="button"
               variant="outline"
@@ -103,9 +109,9 @@ export default function Criteria() {
               <HistoryIcon />
               View history
             </Button>
-          ) : null}
-        </div>
-
+          ) : undefined
+        }
+      >
         {inSetup ? (
           <ol className="flex flex-wrap items-center gap-2 text-sm">
             {STEP_LABELS.map((label, index) => {
@@ -117,7 +123,7 @@ export default function Criteria() {
                   <span
                     className={
                       state === "current"
-                        ? "flex size-6 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground shadow-xs"
+                        ? "flex size-6 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground"
                         : state === "done"
                           ? "flex size-6 items-center justify-center rounded-full bg-primary/12 text-xs font-medium text-primary"
                           : "flex size-6 items-center justify-center rounded-full border border-border text-xs text-muted-foreground"
@@ -145,7 +151,7 @@ export default function Criteria() {
             })}
           </ol>
         ) : null}
-      </header>
+      </PageHeader>
 
       {savedVersion !== null ? (
         <p
@@ -175,7 +181,7 @@ export default function Criteria() {
           {step === 2 ? (
             <section className="grid gap-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-heading text-lg font-medium">
+                <h2 className="font-heading text-xl font-semibold tracking-tight">
                   Review and correct
                 </h2>
                 <Button

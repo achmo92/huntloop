@@ -623,7 +623,7 @@ export function CriteriaForm({
           )}
         />
 
-        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+        <fieldset className="grid gap-5 rounded-xl border border-border bg-card p-4 sm:p-5">
           <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Locations
           </legend>
@@ -682,7 +682,7 @@ export function CriteriaForm({
           />
         </fieldset>
 
-        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+        <fieldset className="grid gap-5 rounded-xl border border-border bg-card p-4 sm:p-5">
           <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Level and timing
           </legend>
@@ -772,7 +772,7 @@ export function CriteriaForm({
           />
         </fieldset>
 
-        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+        <fieldset className="grid gap-5 rounded-xl border border-border bg-card p-4 sm:p-5">
           <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Compensation floor
           </legend>
@@ -873,7 +873,7 @@ export function CriteriaForm({
           </div>
         </fieldset>
 
-        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+        <fieldset className="grid gap-5 rounded-xl border border-border bg-card p-4 sm:p-5">
           <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Exclusions
           </legend>
@@ -913,7 +913,7 @@ export function CriteriaForm({
           />
         </fieldset>
 
-        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+        <fieldset className="grid gap-5 rounded-xl border border-border bg-card p-4 sm:p-5">
           <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             Work authorization
           </legend>
@@ -953,7 +953,7 @@ export function CriteriaForm({
           />
         </fieldset>
 
-        <fieldset className="grid gap-5 rounded-xl border border-border/80 bg-card p-4 sm:p-5">
+        <fieldset className="grid gap-5 rounded-xl border border-border bg-card p-4 sm:p-5">
           <legend className="px-2 font-heading text-sm font-semibold tracking-tight">
             What matters most
           </legend>

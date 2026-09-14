@@ -46,7 +46,7 @@ export function DescribeStep({ onSuggested }: DescribeStepProps) {
   return (
     <form onSubmit={submit} className="grid max-w-2xl gap-4">
       <div>
-        <h2 className="font-heading text-lg font-semibold tracking-tight">
+        <h2 className="font-heading text-xl font-semibold tracking-tight">
           Describe what you're looking for
         </h2>
         <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">

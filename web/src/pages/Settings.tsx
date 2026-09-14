@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { api, apiPut } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { PageHeader } from "@/components/PageHeader"
+import { Skeleton } from "@/components/ui/skeleton"
 import { DiagnosticsPanel } from "./settings/DiagnosticsPanel"
 import { ModelSelect } from "./settings/ModelSelect"
 import { SettingsSection } from "./settings/SettingsSection"
@@ -169,7 +171,22 @@ export default function Settings() {
   }
 
   if (settingsQuery.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading settings…</p>
+    return (
+      <div className="grid gap-8">
+        <PageHeader
+          title="Settings"
+          description="Everything the pipeline needs — no file editing required."
+        />
+        <div className="grid gap-4">
+          <span role="status" className="sr-only">
+            Loading settings…
+          </span>
+          <Skeleton className="h-44 w-full rounded-xl" />
+          <Skeleton className="h-56 w-full rounded-xl" />
+          <Skeleton className="h-40 w-full rounded-xl" />
+        </div>
+      </div>
+    )
   }
 
   if (settingsQuery.isError || !settings) {
@@ -181,15 +198,11 @@ export default function Settings() {
   }
 
   return (
-    <div className="grid gap-6">
-      <header>
-        <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
-          Settings
-        </h1>
-        <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
-          Everything the pipeline needs — no file editing required.
-        </p>
-      </header>
+    <div className="grid gap-8">
+      <PageHeader
+        title="Settings"
+        description="Everything the pipeline needs — no file editing required."
+      />
 
       <SettingsSection
         title="API access"

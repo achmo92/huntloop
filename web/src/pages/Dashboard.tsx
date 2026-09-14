@@ -4,7 +4,9 @@ import { Link, useNavigate } from "react-router-dom"
 import { ArrowRightIcon, CalendarClockIcon } from "lucide-react"
 import { api } from "@/lib/api"
 import { EmptyState } from "@/components/EmptyState"
+import { PageHeader } from "@/components/PageHeader"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Card,
   CardContent,
@@ -96,7 +98,20 @@ export default function Dashboard() {
 
   if (dashboardQuery.isLoading) {
     return (
-      <p className="text-sm text-muted-foreground">Loading dashboard…</p>
+      <div className="grid gap-8">
+        <PageHeader
+          title="Dashboard"
+          description="What happened, what's next, and where things stand."
+        />
+        <div className="grid gap-4">
+          <span role="status" className="sr-only">
+            Loading dashboard…
+          </span>
+          <Skeleton className="h-36 w-full rounded-xl" />
+          <Skeleton className="h-56 w-full rounded-xl" />
+          <Skeleton className="h-40 w-full rounded-xl" />
+        </div>
+      </div>
     )
   }
 
@@ -115,28 +130,23 @@ export default function Dashboard() {
   )
 
   return (
-    <div className="grid gap-6">
-      <header className="grid gap-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
-              Dashboard
-            </h1>
-            <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
-              What happened, what's next, and where things stand.
-            </p>
-          </div>
+    <div className="grid gap-8">
+      <PageHeader
+        title="Dashboard"
+        description="What happened, what's next, and where things stand."
+        actions={
           <RunNowButton
             isRunning={lastStatus === "running"}
             onStarted={() => setWatching(true)}
           />
-        </div>
+        }
+      >
         <nav aria-label="Shortcuts" className="flex flex-wrap gap-2">
           {SHORTCUTS.map((item) => (
             <Link
               key={item.to}
               to={item.to}
-              className="group inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1 text-sm text-muted-foreground shadow-xs transition-colors hover:border-foreground/20 hover:text-foreground"
+              className="group inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1 text-sm text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground"
             >
               {item.label}
               <ArrowRightIcon
@@ -146,7 +156,7 @@ export default function Dashboard() {
             </Link>
           ))}
         </nav>
-      </header>
+      </PageHeader>
 
       {isFirstTime ? (
         <EmptyState
@@ -245,7 +255,7 @@ export default function Dashboard() {
                     </div>
                     <div
                       data-testid="listing-status-count"
-                      className="mt-0.5 font-heading text-xl font-semibold tabular-nums"
+                      className="mt-0.5 font-heading text-2xl font-semibold tabular-nums"
                     >
                       {dashboard.listings_by_status[status] ?? 0}
                     </div>

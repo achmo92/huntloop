@@ -53,16 +53,16 @@ export function FunnelPanel({ funnel }: { funnel: Funnel }) {
                   {label}
                 </dt>
                 <div
-                  className="h-2.5 overflow-hidden rounded-full bg-muted ring-1 ring-inset ring-border/60"
+                  className="h-2.5 overflow-hidden rounded-full bg-muted"
                   role="img"
                   aria-label={`${label}: ${value}`}
                 >
                   <div
-                    className="h-full rounded-full bg-primary/75"
+                    className="h-full rounded-full bg-primary/80"
                     style={{ width }}
                   />
                 </div>
-                <dd className="text-right font-heading text-sm font-medium tabular-nums">
+                <dd className="text-right font-heading text-base font-medium tabular-nums">
                   {value}
                 </dd>
               </div>

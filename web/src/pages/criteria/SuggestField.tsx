@@ -110,7 +110,7 @@ export function SuggestField({
         <div
           role="listbox"
           aria-label="Employer suggestions"
-          className="max-h-48 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
+          className="max-h-48 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-elevation-2"
         >
           {matches.map((name) => (
             <button

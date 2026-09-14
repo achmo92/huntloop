@@ -106,7 +106,7 @@ export function EmployerProposalsStep({ onDone }: EmployerProposalsStepProps) {
   return (
     <section className="grid gap-5">
       <div>
-        <h2 className="font-heading text-lg font-semibold tracking-tight">
+        <h2 className="font-heading text-xl font-semibold tracking-tight">
           Employers to watch
         </h2>
         <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
@@ -140,7 +140,7 @@ export function EmployerProposalsStep({ onDone }: EmployerProposalsStepProps) {
               {candidates.map((candidate) => (
                 <li
                   key={candidate.name}
-                  className="flex items-start gap-3 rounded-xl border border-border bg-card p-3 shadow-xs transition-colors hover:border-foreground/20"
+                  className="flex items-start gap-3 rounded-xl border border-border bg-card p-3 transition-colors hover:border-foreground/20"
                 >
                   <Checkbox
                     className="mt-0.5"
@@ -193,7 +193,7 @@ export function EmployerProposalsStep({ onDone }: EmployerProposalsStepProps) {
               return (
                 <li
                   key={company.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3 shadow-xs"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-3"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{company.name}</p>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ComponentProps } from "react"
 import { useQueryClient } from "@tanstack/react-query"
+import { Loader2Icon } from "lucide-react"
 import { apiPost, ApiError } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -78,6 +79,9 @@ export function RunNowButton({
         onClick={startRun}
         className={className}
       >
+        {running ? (
+          <Loader2Icon aria-hidden="true" className="animate-spin" />
+        ) : null}
         {running ? "Running…" : "Run now"}
       </Button>
       {message !== null ? (
@@ -85,7 +89,7 @@ export function RunNowButton({
           role="status"
           data-testid="run-now-toast"
           className={cn(
-            "fixed right-4 bottom-4 z-50 max-w-sm rounded-xl border bg-popover px-3.5 py-2.5 text-sm shadow-lg",
+            "fixed right-4 bottom-4 z-50 max-w-sm rounded-xl border bg-popover px-3.5 py-2.5 text-sm shadow-elevation-2",
             "animate-in fade-in slide-in-from-bottom-2",
             isFailure
               ? "border-destructive/40 text-destructive"

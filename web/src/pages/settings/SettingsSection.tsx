@@ -72,7 +72,7 @@ export function SettingsSection<T extends FieldValues>({
   return (
     <Card>
       <form onSubmit={form.handleSubmit(submit)}>
-        <CardHeader>
+        <CardHeader className="border-b border-border/70">
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </CardHeader>
