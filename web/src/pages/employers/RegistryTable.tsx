@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { SkeletonTable } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -193,7 +194,12 @@ export function RegistryTable() {
 
   if (companiesQuery.isLoading) {
     return (
-      <p className="text-sm text-muted-foreground">Loading employers…</p>
+      <div className="grid gap-3">
+        <span role="status" className="sr-only">
+          Loading employers…
+        </span>
+        <SkeletonTable rows={5} />
+      </div>
     )
   }
 
@@ -364,7 +370,7 @@ export function RegistryTable() {
       {toast ? (
         <div
           role="status"
-          className="fixed right-4 bottom-4 z-50 rounded-lg border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md"
+          className="fixed right-4 bottom-4 z-50 rounded-lg border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-elevation-2"
         >
           {toast}
         </div>

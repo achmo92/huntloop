@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Sheet,
   SheetContent,
@@ -79,7 +80,26 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
 
         <div className="flex-1 overflow-y-auto px-4 pb-6">
           {detailQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading run…</p>
+            <div className="grid gap-5">
+              <span role="status" className="sr-only">
+                Loading run…
+              </span>
+              <div className="flex gap-2">
+                <Skeleton className="h-5 w-20 rounded-4xl" />
+                <Skeleton className="h-5 w-16 rounded-4xl" />
+              </div>
+              <div className="grid gap-2">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-4/5" />
+                <Skeleton className="h-4 w-3/5" />
+              </div>
+              <div className="grid gap-2">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+              </div>
+            </div>
           ) : detailQuery.isError || !detail ? (
             <p role="alert" className="text-sm text-destructive">
               We couldn't load this run. Close and try again.
@@ -95,7 +115,7 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
               </div>
 
               <section className="grid gap-2">
-                <h3 className="font-heading text-sm font-semibold tracking-tight">Timing & cost</h3>
+                <h3 className="font-heading text-base font-semibold tracking-tight">Timing & cost</h3>
                 <dl className="grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1.5 text-sm">
                   <dt className="text-muted-foreground">Started</dt>
                   <dd className="tabular-nums">
@@ -121,7 +141,7 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
               </section>
 
               <section className="grid gap-2">
-                <h3 className="font-heading text-sm font-semibold tracking-tight">Funnel</h3>
+                <h3 className="font-heading text-base font-semibold tracking-tight">Funnel</h3>
                 <dl className="grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1.5 text-sm">
                   {COUNTERS.map(({ key, label }) => (
                     <div key={key} className="contents">
@@ -134,7 +154,7 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
 
               {detail.error_summary ? (
                 <section className="grid gap-1">
-                  <h3 className="font-heading text-sm font-semibold tracking-tight">Summary</h3>
+                  <h3 className="font-heading text-base font-semibold tracking-tight">Summary</h3>
                   <p className="text-sm text-muted-foreground text-pretty">
                     {detail.error_summary}
                   </p>
@@ -142,7 +162,7 @@ export function RunDetail({ runId, open, onOpenChange }: RunDetailProps) {
               ) : null}
 
               <section className="grid gap-2">
-                <h3 className="font-heading text-sm font-semibold tracking-tight">
+                <h3 className="font-heading text-base font-semibold tracking-tight">
                   Failures ({detail.errors.length})
                 </h3>
                 {detail.errors.length === 0 ? (

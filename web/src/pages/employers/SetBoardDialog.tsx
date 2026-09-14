@@ -101,9 +101,11 @@ export function SetBoardDialog({ company, onClose }: SetBoardDialogProps) {
       }}
     >
       <DialogContent>
-        <form onSubmit={submit} className="grid gap-4">
+        <form onSubmit={submit} className="grid gap-5">
           <DialogHeader>
-            <DialogTitle>Set job board</DialogTitle>
+            <DialogTitle className="text-lg font-semibold">
+              Set job board
+            </DialogTitle>
             <DialogDescription>
               We'll watch this board instead of guessing.
             </DialogDescription>

@@ -44,7 +44,7 @@ export function StopRunButton({ runId, className }: StopRunButtonProps) {
         mutation.mutate()
       }}
       className={cn(
-        "text-destructive hover:bg-destructive/10 hover:text-destructive",
+        "border-destructive/30 text-destructive hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive",
         className
       )}
     >

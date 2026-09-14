@@ -109,9 +109,11 @@ export function AddEmployerDialog() {
           Add employer
         </DialogTrigger>
         <DialogContent>
-          <form onSubmit={submit} className="grid gap-4">
+          <form onSubmit={submit} className="grid gap-5">
             <DialogHeader>
-              <DialogTitle>Add employer</DialogTitle>
+              <DialogTitle className="text-lg font-semibold">
+                Add employer
+              </DialogTitle>
               <DialogDescription>
                 Add a company by name — we'll start finding their job board in
                 the background.
@@ -174,7 +176,7 @@ export function AddEmployerDialog() {
       {toast ? (
         <div
           role="status"
-          className="fixed right-4 bottom-4 z-50 rounded-lg border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md"
+          className="fixed right-4 bottom-4 z-50 rounded-lg border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-elevation-2"
         >
           {toast}
         </div>

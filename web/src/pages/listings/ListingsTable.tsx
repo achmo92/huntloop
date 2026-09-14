@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { SkeletonTable } from "@/components/ui/skeleton"
 import { StatusSelect } from "./StatusSelect"
 import type { ListingFilters } from "./FilterBar"
 
@@ -250,7 +251,14 @@ export function ListingsTable({
   })
 
   if (jobsQuery.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading listings…</p>
+    return (
+      <div className="grid gap-3">
+        <span role="status" className="sr-only">
+          Loading listings…
+        </span>
+        <SkeletonTable />
+      </div>
+    )
   }
 
   if (jobsQuery.isError) {

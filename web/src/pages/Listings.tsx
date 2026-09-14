@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { EmptyState } from "@/components/EmptyState"
+import { PageHeader } from "@/components/PageHeader"
+import { SkeletonTable } from "@/components/ui/skeleton"
 import {
   EMPTY_FILTERS,
   FilterBar,
@@ -58,16 +60,11 @@ export default function Listings() {
   }
 
   return (
-    <div className="grid gap-6">
-      <header>
-        <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
-          Listings
-        </h1>
-        <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
-          Every role we scored for you — filter, sort, and move each one through
-          your pipeline.
-        </p>
-      </header>
+    <div className="grid gap-8">
+      <PageHeader
+        title="Listings"
+        description="Every role we scored for you — filter, sort, and move each one through your pipeline."
+      />
 
       <FilterBar
         value={filters}
@@ -76,7 +73,12 @@ export default function Listings() {
       />
 
       {jobsQuery.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading listings…</p>
+        <div className="grid gap-3">
+          <span role="status" className="sr-only">
+            Loading listings…
+          </span>
+          <SkeletonTable />
+        </div>
       ) : isEmpty ? (
         hasFilters ? (
           <EmptyState

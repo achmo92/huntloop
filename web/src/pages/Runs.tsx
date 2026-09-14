@@ -2,6 +2,8 @@ import { useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { EmptyState } from "@/components/EmptyState"
+import { PageHeader } from "@/components/PageHeader"
+import { SkeletonTable } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -64,24 +66,19 @@ export default function Runs() {
   const isEmpty = runsQuery.isSuccess && runs.length === 0
 
   return (
-    <div className="grid gap-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance">
-            Runs
-          </h1>
-          <p className="mt-1.5 max-w-prose text-sm text-muted-foreground text-pretty">
-            Every discovery run and what it found — a quiet week is explained
-            here, never ambiguous.
-          </p>
-        </div>
-        {!isEmpty ? (
-          <RunNowButton
-            isRunning={newestRunning}
-            onStarted={() => setWatching(true)}
-          />
-        ) : null}
-      </header>
+    <div className="grid gap-8">
+      <PageHeader
+        title="Runs"
+        description="Every discovery run and what it found — a quiet week is explained here, never ambiguous."
+        actions={
+          !isEmpty ? (
+            <RunNowButton
+              isRunning={newestRunning}
+              onStarted={() => setWatching(true)}
+            />
+          ) : undefined
+        }
+      />
 
       {hasRunning ? (
         <p className="text-sm text-muted-foreground text-pretty">
@@ -91,7 +88,12 @@ export default function Runs() {
       ) : null}
 
       {runsQuery.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading runs…</p>
+        <div className="grid gap-3">
+          <span role="status" className="sr-only">
+            Loading runs…
+          </span>
+          <SkeletonTable />
+        </div>
       ) : runsQuery.isError ? (
         <p role="alert" className="text-sm text-destructive">
           We couldn't load your run history. Refresh to try again.

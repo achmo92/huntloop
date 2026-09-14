@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { api, apiPost } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Sheet,
   SheetContent,
@@ -152,7 +153,27 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
 
         <div className="flex-1 overflow-y-auto px-4 pb-6">
           {detailQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading listing…</p>
+            <div className="grid gap-5">
+              <span role="status" className="sr-only">
+                Loading listing…
+              </span>
+              <div className="grid gap-2">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-4 w-56" />
+              </div>
+              <div className="grid gap-2.5">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-16 w-full rounded-lg" />
+                <Skeleton className="h-16 w-full rounded-lg" />
+                <Skeleton className="h-16 w-full rounded-lg" />
+                <Skeleton className="h-16 w-full rounded-lg" />
+              </div>
+              <div className="grid gap-2">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+              </div>
+            </div>
           ) : detailQuery.isError || !detail ? (
             <p role="alert" className="text-sm text-destructive">
               We couldn't load this listing. Close and try again.
@@ -181,7 +202,7 @@ export function DetailDrawer({ jobId, open, onOpenChange }: DetailDrawerProps) {
               <section aria-labelledby="score-heading" className="grid gap-3">
                 <h3
                   id="score-heading"
-                  className="font-heading text-sm font-semibold tracking-tight"
+                  className="font-heading text-base font-semibold tracking-tight"
                 >
                   Score
                 </h3>
