@@ -19,7 +19,7 @@ export function EmptyState({
   onAction,
 }: EmptyStateProps) {
   return (
-    <div className="mx-auto flex max-w-md flex-col items-center gap-2.5 py-20 text-center">
+    <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-6 py-24 text-center">
       <h2 className="font-heading text-xl font-semibold tracking-tight text-balance">
         {title}
       </h2>
@@ -27,7 +27,7 @@ export function EmptyState({
         {description}
       </p>
       {actionLabel ? (
-        <Button className="mt-3" onClick={onAction}>
+        <Button className="mt-2" onClick={onAction}>
           {actionLabel}
         </Button>
       ) : null}
