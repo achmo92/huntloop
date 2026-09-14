@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 import { api } from "@/lib/api"
+import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { routes } from "./App"
 
 vi.mock("@/lib/api", () => ({
@@ -56,9 +57,11 @@ function renderAt(path: string) {
   })
   const router = createMemoryRouter(routes, { initialEntries: [path] })
   render(
-    <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ThemeProvider>
   )
   return router
 }
@@ -74,12 +77,15 @@ describe("App", () => {
       "Runs",
       "Settings",
     ]) {
-      // The nav renders twice (mobile top bar + desktop sidebar); either
-      // instance is a valid link.
+      // The shell renders the sidebar nav; every section stays a real link.
       expect(screen.getAllByRole("link", { name: label }).length).toBeGreaterThan(0)
     }
     // GAP-3: Get Started is gone as a nav destination.
     expect(screen.queryByRole("link", { name: "Get started" })).toBeNull()
+    // The header carries the theme control for every route.
+    expect(
+      screen.getByRole("button", { name: /switch to (dark|light) theme/i })
+    ).toBeInTheDocument()
   })
 
   it("redirects /onboarding to the merged Criteria page", async () => {
