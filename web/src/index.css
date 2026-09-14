@@ -219,4 +219,17 @@
   ::-webkit-scrollbar-thumb:hover {
     background-color: color-mix(in oklab, var(--muted-foreground) 50%, transparent);
   }
+
+  /* Honour reduced motion: state changes (colour, opacity) still land, they
+     just stop travelling. Focus indicators are outlines, never transitions. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }

@@ -1,14 +1,16 @@
 import { render, screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { AppShell } from "@/components/shell/AppShell"
 
 /**
  * The shell is the frame every page is read inside: six icon+label entries, one
- * unmistakable active route, and a header that carries the current section's
- * context without competing with the page's own <h1>.
+ * unmistakable active route, a fold that remembers itself, a mobile drawer, and
+ * a header that carries the current section's context without competing with
+ * the page's own <h1>.
  */
 
 const SECTIONS = [
@@ -19,6 +21,8 @@ const SECTIONS = [
   "Runs",
   "Settings",
 ]
+
+const SIDEBAR_KEY = "huntloop-sidebar"
 
 function renderShell(path: string) {
   const client = new QueryClient({
@@ -41,17 +45,28 @@ function renderShell(path: string) {
     ],
     { initialEntries: [path] }
   )
-  render(
+  const view = render(
     <ThemeProvider>
       <QueryClientProvider client={client}>
         <RouterProvider router={router} />
       </QueryClientProvider>
     </ThemeProvider>
   )
-  return router
+  return { router, ...view }
 }
 
+const primaryNav = () => screen.getByRole("navigation", { name: "Primary" })
+
 describe("AppShell sidebar", () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  afterEach(() => {
+    window.localStorage.clear()
+    document.documentElement.className = ""
+  })
+
   it("exposes all six sections as icon+label links", () => {
     renderShell("/")
     for (const label of SECTIONS) {
@@ -74,9 +89,90 @@ describe("AppShell sidebar", () => {
     expect(active).toHaveLength(1)
     expect(active[0]).toHaveAccessibleName("Runs")
   })
+
+  it("renders a collapsed rail from the stored fold preference", () => {
+    window.localStorage.setItem(SIDEBAR_KEY, "collapsed")
+    renderShell("/listings")
+
+    expect(primaryNav()).toHaveAttribute("data-collapsed", "true")
+    const listings = screen.getAllByRole("link", { name: "Listings" })[0]
+    // The label is visually hidden but the accessible name survives.
+    expect(listings.querySelector("span.sr-only")).toHaveTextContent("Listings")
+    expect(listings).toHaveAttribute("title", "Listings")
+    expect(listings).toHaveAttribute("aria-current", "page")
+  })
+
+  it("persists the fold choice and reads it back on remount", async () => {
+    const user = userEvent.setup()
+    const first = renderShell("/")
+    expect(primaryNav()).toHaveAttribute("data-collapsed", "false")
+
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }))
+    expect(window.localStorage.getItem(SIDEBAR_KEY)).toBe("collapsed")
+    expect(primaryNav()).toHaveAttribute("data-collapsed", "true")
+
+    first.unmount()
+    renderShell("/")
+    expect(primaryNav()).toHaveAttribute("data-collapsed", "true")
+  })
+})
+
+describe("AppShell mobile drawer", () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  afterEach(() => {
+    window.localStorage.clear()
+    document.documentElement.className = ""
+  })
+
+  it("opens the same six-section nav from the header trigger", async () => {
+    const user = userEvent.setup()
+    renderShell("/listings")
+
+    const trigger = screen.getByRole("button", { name: "Open navigation" })
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
+
+    await user.click(trigger)
+
+    const drawer = await screen.findByRole("dialog")
+    for (const label of SECTIONS) {
+      expect(
+        within(drawer).getAllByRole("link", { name: label }).length
+      ).toBeGreaterThan(0)
+    }
+    const active = within(drawer).getAllByRole("link", { current: "page" })
+    expect(active).toHaveLength(1)
+    expect(active[0]).toHaveAccessibleName("Listings")
+    expect(trigger).toHaveAttribute("aria-expanded", "true")
+  })
+})
+
+describe("AppShell accessibility", () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  it("puts a skip link first in focus order, targeting main", () => {
+    const { container } = renderShell("/")
+
+    const skip = screen.getByRole("link", { name: /skip to content/i })
+    expect(skip).toHaveAttribute("href", "#main")
+    expect(container.querySelector("main#main")).not.toBeNull()
+
+    const firstFocusable = container.querySelector(
+      "a[href], button, [tabindex]:not([tabindex='-1'])"
+    )
+    expect(firstFocusable).toBe(skip)
+  })
 })
 
 describe("AppShell header", () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
   it("shows the current section context and the theme toggle", () => {
     renderShell("/listings")
     const banner = screen.getByRole("banner")
