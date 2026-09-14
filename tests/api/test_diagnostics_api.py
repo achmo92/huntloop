@@ -46,7 +46,7 @@ def test_llm_check_passes_when_endpoint_answers(client, monkeypatch):
     assert body["remedy"] is None
 
 
-def test_llm_check_failure_names_endpoint_and_gives_remedy(client, monkeypatch):
+def test_llm_check_failure_is_generic_and_gives_remedy(client, monkeypatch):
     client.app.dependency_overrides[get_llm] = lambda: object()
 
     def _boom(*args, **kwargs):
@@ -58,10 +58,36 @@ def test_llm_check_failure_names_endpoint_and_gives_remedy(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "fail"
-    # The failing detail names the endpoint actually configured (OPS-06).
-    assert load_config().openai_base_url in body["detail"]
+    # T-04-09: the detail is generic — never the internal endpoint or raw exc.
+    assert load_config().openai_base_url not in body["detail"]
+    assert "connection refused" not in body["detail"]
     assert body["remedy"]
     assert "API access" in body["remedy"]
+
+
+def test_llm_check_pass_omits_the_endpoint_url(client, monkeypatch):
+    client.app.dependency_overrides[get_llm] = lambda: object()
+    monkeypatch.setattr(diagnostics, "complete_json", lambda *a, **k: object())
+
+    resp = client.post("/api/diagnostics/llm")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "pass"
+    assert load_config().openai_base_url not in body["detail"]
+
+
+def test_database_failure_is_generic(client, monkeypatch):
+    def _boom():
+        raise RuntimeError("secret dsn leaked")
+
+    monkeypatch.setattr(diagnostics, "get_engine", _boom)
+
+    resp = client.post("/api/diagnostics/database")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "fail"
+    assert "secret dsn leaked" not in body["detail"]
+    assert body["remedy"]
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +137,37 @@ def test_employer_fetch_without_resolved_employer_is_honest(client):
     body = resp.json()
     assert body["status"] == "fail"
     assert "resolve at least one employer" in body["remedy"].lower()
+
+
+class _BoomAdapter:
+    def fetch(self, slug, *, client=None):
+        raise RuntimeError("raw internal")
+
+
+def test_employer_fetch_failure_is_generic(client, make_session, monkeypatch):
+    """A raw adapter exception must never reach the diagnostics body (T-04-09)."""
+    session = make_session()
+    try:
+        session.add(
+            Company(
+                name="Acme",
+                ats=AtsPlatform.GREENHOUSE,
+                ats_identifier="acme",
+                resolved_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    monkeypatch.setattr(diagnostics, "get_adapter", lambda platform: _BoomAdapter())
+
+    resp = client.post("/api/diagnostics/employer-fetch")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "fail"
+    assert "raw internal" not in body["detail"]
+    assert body["remedy"]
 
 
 # ---------------------------------------------------------------------------
