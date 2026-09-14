@@ -52,6 +52,12 @@ the built React SPA same-origin). Open **http://localhost:8000** on the host, or
 **http://<machine-ip>:8000** from any other device on the same network — no
 terminal, no file editing, no login.
 
+Reaching the UI by a bare LAN IP needs no configuration. To reach it through a
+DNS name or reverse proxy, add that hostname to `HUNTLOOP_ALLOWED_HOSTS`
+(default `localhost,127.0.0.1`). Requests whose host is neither a listed
+hostname nor a bare IP literal are rejected as a DNS-rebinding defense, and
+cross-origin browser writes are rejected as a CSRF defense.
+
 To stop everything: `docker compose down` (add `-v` to also delete the data
 volume — that erases your listings).
 

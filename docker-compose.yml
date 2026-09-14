@@ -15,6 +15,15 @@ x-huntloop-env: &huntloop-env
   # the encrypted credentials store (key 'openai_api_key'); this env var is the
   # documented builder-only fallback (see config.resolve_llm_api_key).
   HUNTLOOP_OPENAI_API_KEY: ${HUNTLOOP_OPENAI_API_KEY:-}
+  # T-04-02: hostname allowlist for the browser surface. Requests whose Host
+  # is not in this list AND is not a bare IP literal are rejected 400
+  # (DNS-rebinding defense). LAN access by IP (http://<machine-ip>:8000) works
+  # with no change; set this when reaching the UI through a DNS name or
+  # reverse proxy, e.g. HUNTLOOP_ALLOWED_HOSTS=localhost,127.0.0.1,huntloop.lan
+  HUNTLOOP_ALLOWED_HOSTS: ${HUNTLOOP_ALLOWED_HOSTS:-localhost,127.0.0.1}
+  # Optional escape hatch for deployments whose proxy rewrites Host: exact
+  # origins that same-origin enforcement should also accept (comma-separated).
+  HUNTLOOP_ALLOWED_ORIGINS: ${HUNTLOOP_ALLOWED_ORIGINS:-}
   HUNTLOOP_TRIAGE_MODEL: ${HUNTLOOP_TRIAGE_MODEL:-gpt-4o-mini}
   HUNTLOOP_SCORING_MODEL: ${HUNTLOOP_SCORING_MODEL:-gpt-4o}
   HUNTLOOP_EXTRACTION_MODEL: ${HUNTLOOP_EXTRACTION_MODEL:-gpt-4o-mini}

@@ -75,6 +75,21 @@ def test_web_reaches_all_devices():
     assert not any("127.0.0.1" in port for port in ports)
 
 
+def test_web_allows_configured_hosts():
+    """T-04-02: the host allowlist is configurable through the deployment surface.
+
+    Plain text/config proof (no Docker daemon), mirroring the other ops tests:
+    the compose env anchor passes the variable through and .env.example
+    documents it.
+    """
+    text = COMPOSE_PATH.read_text()
+    assert "HUNTLOOP_ALLOWED_HOSTS" in text
+    env_text = (REPO_ROOT / ".env.example").read_text()
+    assert "HUNTLOOP_ALLOWED_HOSTS=" in env_text
+    assert "HUNTLOOP_ALLOWED_ORIGINS" in text
+    assert "HUNTLOOP_ALLOWED_ORIGINS=" in env_text
+
+
 def test_dockerfile_builds_frontend():
     """The image bakes the SPA and keeps the Playwright chromium layer."""
     text = DOCKERFILE_PATH.read_text()
