@@ -34,9 +34,26 @@ x-huntloop-env: &huntloop-env
   HUNTLOOP_RUN_SPEND_CAP_USD: ${HUNTLOOP_RUN_SPEND_CAP_USD:-}
 
 services:
+  # T-04-07 follow-on: the runtime services run as non-root (uid 10001), but a
+  # fresh named volume is created root-owned, so the non-root migrate/app cannot
+  # write SQLite ("attempt to write a readonly database"). This one-shot root
+  # container repairs `/data` ownership before migrate, so `docker compose up`
+  # works on a fresh clone and on a pre-existing root-owned volume alike.
+  init-perms:
+    build: .
+    image: huntloop:local
+    user: "0:0"
+    command: ["sh", "-c", "chown -R huntloop:huntloop /data"]
+    volumes:
+      - data:/data
+    restart: "no"
+
   migrate:
     build: .
     image: huntloop:local
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
     command:
       - sh
       - -c
