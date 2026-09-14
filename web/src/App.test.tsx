@@ -37,7 +37,11 @@ const EMPTY_DASHBOARD = {
 }
 
 const SETTINGS = {
-  api_access: { base_url: "https://api.openai.com/v1", has_api_key: false },
+  api_access: {
+    base_url: "https://api.openai.com/v1",
+    has_api_key: false,
+    api_key_reentry_required: false,
+  },
   models: { triage: "t", scoring: "s", extraction: "e" },
   schedule: { run_at: "08:00", timezone: "UTC" },
   spend_cap: { cap_usd: null },

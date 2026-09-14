@@ -33,7 +33,11 @@ const mockedApiPost = vi.mocked(apiPost)
 const mockedApiPut = vi.mocked(apiPut)
 
 const SETTINGS = {
-  api_access: { base_url: "https://api.openai.com/v1", has_api_key: true },
+  api_access: {
+    base_url: "https://api.openai.com/v1",
+    has_api_key: true,
+    api_key_reentry_required: false,
+  },
   models: { triage: "gpt-4o-mini", scoring: "gpt-4o", extraction: "gpt-4o" },
   schedule: { run_at: "08:00", timezone: "UTC" },
   spend_cap: { cap_usd: 5 },
@@ -227,6 +231,24 @@ describe("Settings", () => {
 
     const hints = await screen.findAllByText(/Couldn't reach your provider/)
     expect(hints.length).toBeGreaterThan(0)
+  })
+
+  it("surfaces the API-key re-entry requirement after a base-URL change (T-04-04)", async () => {
+    mockedApi.mockImplementation(async (path) => {
+      if (path === "/api/settings")
+        return {
+          ...SETTINGS,
+          api_access: {
+            ...SETTINGS.api_access,
+            api_key_reentry_required: true,
+          },
+        }
+      if (path === "/api/settings/models") return AVAILABLE_MODELS
+      throw new Error(`unexpected GET ${path}`)
+    })
+    renderWithProviders(<Settings />)
+
+    expect(await screen.findByText(/re-enter/i)).toBeInTheDocument()
   })
 })
 

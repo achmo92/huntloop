@@ -29,6 +29,7 @@ def _clean_settings_env(monkeypatch):
         "HUNTLOOP_TIMEZONE",
         "HUNTLOOP_RUN_SPEND_CAP_USD",
         "HUNTLOOP_OPENAI_API_KEY",
+        "HUNTLOOP_ALLOW_PRIVATE_ENDPOINT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -41,6 +42,7 @@ def test_get_settings_fresh_db(client):
     assert set(body.keys()) == {"api_access", "models", "schedule", "spend_cap"}
     assert body["api_access"]["base_url"] == cfg.openai_base_url
     assert body["api_access"]["has_api_key"] is False
+    assert body["api_access"]["api_key_reentry_required"] is False
     # The key VALUE is never present anywhere in the response.
     assert "api_key" not in body["api_access"]
     assert body["models"] == {
@@ -56,7 +58,11 @@ def test_get_settings_fresh_db(client):
 def test_put_api_access_base_url_writes_setting_row(client, make_session):
     resp = client.put("/api/settings/api-access", json={"base_url": "https://llm.example/v1"})
     assert resp.status_code == 200
-    assert resp.json() == {"base_url": "https://llm.example/v1", "has_api_key": False}
+    assert resp.json() == {
+        "base_url": "https://llm.example/v1",
+        "has_api_key": False,
+        "api_key_reentry_required": False,
+    }
     assert client.get("/api/settings").json()["api_access"]["base_url"] == "https://llm.example/v1"
 
     session = make_session()
@@ -304,3 +310,98 @@ def test_available_models_uses_the_stored_key_and_never_returns_it(client, monke
     assert captured["base_url"].startswith("http")
     # The key never reaches the response body.
     assert "sk-super-secret" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# T-04-04: the stored key is bound to the base URL it was saved for. Changing
+# the base URL without re-entering the key must never forward the key to the
+# new (possibly attacker-controlled) endpoint.
+# ---------------------------------------------------------------------------
+
+
+def test_models_proxy_does_not_send_key_to_a_changed_base_url(client, monkeypatch):
+    _store_key(client, "sk-secret")
+    assert (
+        client.put(
+            "/api/settings/api-access",
+            json={"base_url": "https://attacker.example/v1"},
+        ).status_code
+        == 200
+    )
+
+    called = {"count": 0}
+
+    def _should_not_run(*_args, **_kwargs):
+        called["count"] += 1
+        return ["m-a"]
+
+    monkeypatch.setattr(settings, "_fetch_provider_models", _should_not_run, raising=False)
+
+    resp = client.get("/api/settings/models")
+    assert resp.status_code == 200
+    assert resp.json()["source"] == "fallback"
+    assert called["count"] == 0
+
+    body = client.get("/api/settings").json()
+    assert body["api_access"]["api_key_reentry_required"] is True
+    assert body["api_access"]["has_api_key"] is True
+
+
+def test_reentering_key_rebinds_to_the_new_base(client, monkeypatch):
+    _store_key(client, "sk-secret")
+    assert (
+        client.put(
+            "/api/settings/api-access",
+            json={"base_url": "https://attacker.example/v1"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put("/api/settings/api-access", json={"api_key": "sk-2"}).status_code
+        == 200
+    )
+
+    captured: dict = {}
+
+    def _capture(base_url: str, api_key: str):
+        captured["base_url"] = base_url
+        captured["api_key"] = api_key
+        return ["m-a"]
+
+    monkeypatch.setattr(settings, "_fetch_provider_models", _capture, raising=False)
+
+    resp = client.get("/api/settings/models")
+    assert resp.status_code == 200
+    assert resp.json()["source"] == "provider"
+    assert captured["base_url"] == "https://attacker.example/v1"
+    assert captured["api_key"] == "sk-2"
+    assert (
+        client.get("/api/settings").json()["api_access"]["api_key_reentry_required"]
+        is False
+    )
+
+
+def test_put_api_access_rejects_non_https_and_private_base_url(client):
+    # Plain http is rejected on the no-auth private-network posture.
+    assert (
+        client.put(
+            "/api/settings/api-access", json={"base_url": "http://llm.example/v1"}
+        ).status_code
+        == 422
+    )
+    # An https URL that resolves to loopback is rejected too.
+    assert (
+        client.put(
+            "/api/settings/api-access", json={"base_url": "https://127.0.0.1/v1"}
+        ).status_code
+        == 422
+    )
+
+
+def test_allow_private_endpoint_env_permits_loopback_base_url(client, monkeypatch):
+    monkeypatch.setenv("HUNTLOOP_ALLOW_PRIVATE_ENDPOINT", "1")
+    resp = client.put(
+        "/api/settings/api-access", json={"base_url": "https://127.0.0.1/v1"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["base_url"] == "https://127.0.0.1/v1"
