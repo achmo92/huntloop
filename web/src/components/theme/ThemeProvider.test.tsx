@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from "@/lib/theme"
@@ -151,7 +151,7 @@ describe("theme runtime", () => {
     renderProbe()
     expect(htmlHasDark()).toBe(false)
 
-    controller.fire(true)
+    act(() => controller.fire(true))
     expect(htmlHasDark()).toBe(true)
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull()
   })

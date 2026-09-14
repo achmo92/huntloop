@@ -5,6 +5,26 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>HuntLoop</title>
+    <!--
+      Pre-paint theme script (D-24b). Runs before the module boots so a
+      dark-preference user never sees a white flash. It resolves the theme with
+      the SAME rule and the SAME storage key as src/lib/theme.ts, and is wrapped
+      in try/catch so denied storage (private mode) cannot break boot.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = window.localStorage.getItem("huntloop-theme")
+          var prefersDark =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches
+          var dark = stored === "dark" || (stored !== "light" && prefersDark)
+          if (dark) document.documentElement.classList.add("dark")
+        } catch (error) {
+          /* storage denied — fall through to the light default */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
