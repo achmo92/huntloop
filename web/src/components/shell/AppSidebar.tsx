@@ -1,5 +1,9 @@
 import { NavLink } from "react-router-dom"
-import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react"
+import {
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
+  ShieldCheckIcon,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -19,7 +23,8 @@ interface AppSidebarProps {
  * The primary navigation (GAP-17.1). Each entry carries an icon *and* a label,
  * and the active route is signalled three ways — an accent rail, an accent
  * surface and a weight increase — so it never relies on colour alone. The
- * `NavLink` sets `aria-current="page"` itself; nothing overrides it.
+ * `NavLink` sets `aria-current="page"` itself; nothing overrides it. The foot
+ * of the rail carries one product truth: this app never leaves the machine.
  */
 export function AppSidebar({
   collapsed = false,
@@ -73,7 +78,9 @@ export function AppSidebar({
                     aria-hidden="true"
                     className={cn(
                       "absolute top-1/2 left-0 h-5 w-[3px] -translate-y-1/2 rounded-full bg-brand transition-opacity",
-                      isActive ? "opacity-100" : "opacity-0"
+                      isActive
+                        ? "opacity-100"
+                        : "opacity-0 group-hover:opacity-40"
                     )}
                   />
                   <Icon aria-hidden="true" className="size-4 shrink-0" />
@@ -87,30 +94,42 @@ export function AppSidebar({
         })}
       </nav>
 
-      {onToggleCollapsed ? (
+      <div className="shrink-0 border-t border-sidebar-border p-3">
         <div
           className={cn(
-            "shrink-0 border-t border-sidebar-border p-3",
-            collapsed && "flex justify-center px-2"
+            "flex items-center gap-2 px-1 text-xs text-muted-foreground",
+            collapsed && "justify-center px-0"
           )}
         >
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={onToggleCollapsed}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            {collapsed ? (
-              <PanelLeftOpenIcon aria-hidden="true" />
-            ) : (
-              <PanelLeftCloseIcon aria-hidden="true" />
-            )}
-          </Button>
+          <ShieldCheckIcon
+            aria-hidden="true"
+            className="size-3.5 shrink-0 text-brand"
+          />
+          <span className={cn("truncate", collapsed && "sr-only")}>
+            Private to this machine
+          </span>
         </div>
-      ) : null}
+
+        {onToggleCollapsed ? (
+          <div className={cn("mt-2 flex", collapsed && "justify-center")}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggleCollapsed}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              {collapsed ? (
+                <PanelLeftOpenIcon aria-hidden="true" />
+              ) : (
+                <PanelLeftCloseIcon aria-hidden="true" />
+              )}
+            </Button>
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
