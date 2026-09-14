@@ -66,18 +66,16 @@ def check_llm(client: Any = Depends(get_llm)) -> DiagOut:
             user="ping",
             schema=_LlmPing,
         )
-    except Exception as exc:  # noqa: BLE001 - a diagnostic must report, not raise
+    except Exception:  # noqa: BLE001 - a diagnostic must report, not raise
+        # T-04-09: never expose the internal endpoint URL or raw exception text.
         return DiagOut(
             status="fail",
-            detail=(
-                f"the model endpoint {cfg.openai_base_url} did not respond "
-                f"cleanly: {exc}"
-            ),
+            detail="the configured model endpoint did not respond",
             remedy=_LLM_REMEDY,
         )
     return DiagOut(
         status="pass",
-        detail=f"reached the model endpoint {cfg.openai_base_url}",
+        detail="the configured model endpoint responded",
         remedy=None,
     )
 
@@ -90,10 +88,11 @@ def check_database() -> DiagOut:
             conn.execute(select(1))
         with get_credentials_engine().connect() as conn:
             conn.execute(select(1))
-    except Exception as exc:  # noqa: BLE001 - a diagnostic must report, not raise
+    except Exception:  # noqa: BLE001 - a diagnostic must report, not raise
+        # T-04-09: generic detail, never a raw DSN/exception string.
         return DiagOut(
             status="fail",
-            detail=f"database probe failed: {exc}",
+            detail="database probe failed",
             remedy=_DATABASE_REMEDY,
         )
     return DiagOut(
@@ -125,9 +124,11 @@ def check_employer_fetch(session: Session = Depends(get_session)) -> DiagOut:
 
     try:
         adapter = get_adapter(company.ats.value if company.ats is not None else "")
-    except UnsupportedPlatform as exc:
+    except UnsupportedPlatform:
         return DiagOut(
-            status="fail", detail=f"{company.name}: {exc}", remedy=_EMPLOYER_REMEDY
+            status="fail",
+            detail="no live board probe is available for this employer",
+            remedy=_EMPLOYER_REMEDY,
         )
 
     if not company.ats_identifier:
@@ -140,10 +141,11 @@ def check_employer_fetch(session: Session = Depends(get_session)) -> DiagOut:
     http_client = make_client()
     try:
         result = adapter.fetch(company.ats_identifier, client=http_client)
-    except Exception as exc:  # noqa: BLE001 - a diagnostic must report, not raise
+    except Exception:  # noqa: BLE001 - a diagnostic must report, not raise
+        # T-04-09: the company name is the user's own data; the exception is not.
         return DiagOut(
             status="fail",
-            detail=f"{company.name}: {exc}",
+            detail="the employer's board could not be read",
             remedy=_EMPLOYER_REMEDY,
         )
     finally:
@@ -157,9 +159,6 @@ def check_employer_fetch(session: Session = Depends(get_session)) -> DiagOut:
         )
     return DiagOut(
         status="fail",
-        detail=(
-            f"{company.name}: "
-            f"{(result.error_kind or result.status).value}"
-        ),
+        detail="the employer's board did not return listings",
         remedy=_EMPLOYER_REMEDY,
     )

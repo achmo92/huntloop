@@ -89,7 +89,9 @@ class CompanyPatch(BaseModel):
 
 
 class BatchCreate(BaseModel):
-    names: list[str]
+    # T-04-08: bounded bulk payload — an unbounded names list is a cheap
+    # denial-of-service on an unauthenticated LAN API (422 beyond the cap).
+    names: list[str] = Field(max_length=200)
     careers_urls: dict[str, str] | None = None
 
 
@@ -102,7 +104,8 @@ class ResolveAccepted(BaseModel):
 
 
 class ResolveBatchRequest(BaseModel):
-    ids: list[uuid.UUID]
+    # T-04-08: bounded bulk payload; each id queues a background probe.
+    ids: list[uuid.UUID] = Field(max_length=100)
 
 
 class ResolveBatchResult(BaseModel):

@@ -29,6 +29,27 @@ from huntloop.registry.resolve import (
 
 logger = logging.getLogger(__name__)
 
+# T-04-08: a bulk resolve queues one daemon thread per employer, but the probe
+# bodies are gated by ONE process-wide semaphore so a large batch cannot open
+# an unbounded number of simultaneous board fetches. Lazily created under a
+# double-checked lock: concurrent first callers must not each build their own
+# semaphore (that would silently defeat the cap).
+_probe_slots: threading.BoundedSemaphore | None = None
+_probe_slots_lock = threading.Lock()
+
+
+def _probe_semaphore() -> threading.BoundedSemaphore:
+    global _probe_slots
+    if _probe_slots is None:
+        with _probe_slots_lock:
+            if _probe_slots is None:
+                from huntloop.config import load_config
+
+                _probe_slots = threading.BoundedSemaphore(
+                    max(1, load_config().max_employer_concurrency)
+                )
+    return _probe_slots
+
 
 def run_in_background(fn, *args, **kwargs) -> threading.Thread:
     """Start a daemon thread running ``fn(*args, **kwargs)`` and return it.
@@ -62,15 +83,18 @@ def resolve_company_in_background(company_id: uuid.UUID) -> None:
         if company is None:
             return
         try:
-            result = resolve_employer(
-                name=company.name,
-                careers_url=company.careers_url,
-                client=client,
-                static_fetcher=StaticPageFetcher(),
-                rendered_fetcher=RenderedPageFetcher(),
-            )
-            persist_resolution(session, company.name, result)
-            session.commit()
+            # T-04-08: only the probe/commit section is gated; the exception
+            # handler and the outer finally stay outside so cleanup always runs.
+            with _probe_semaphore():
+                result = resolve_employer(
+                    name=company.name,
+                    careers_url=company.careers_url,
+                    client=client,
+                    static_fetcher=StaticPageFetcher(),
+                    rendered_fetcher=RenderedPageFetcher(),
+                )
+                persist_resolution(session, company.name, result)
+                session.commit()
         except Exception as exc:  # a background probe must never leave the marker stuck
             session.rollback()
             failed = session.get(Company, company_id)
