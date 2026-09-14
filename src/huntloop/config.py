@@ -51,6 +51,10 @@ class Config:
     # origin escape hatch for proxies that rewrite Host. Both from HUNTLOOP_*.
     allowed_hosts: tuple[str, ...]
     allowed_origins: tuple[str, ...]
+    # T-04-04: allow a privately-addressed LLM base URL (e.g. a LAN Ollama).
+    # Off by default: the settings API requires https and a public address
+    # unless this is set.
+    allow_private_endpoint: bool
     run_spend_cap_usd: Decimal | None
 
 
@@ -65,6 +69,14 @@ def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
         return default
     values = tuple(value.strip().lower() for value in raw.split(",") if value.strip())
     return values or default
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    """Parse a boolean env var; unset or blank falls back to ``default``."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -224,6 +236,7 @@ def load_config() -> Config:
         "HUNTLOOP_ALLOWED_HOSTS", ("localhost", "127.0.0.1", "testserver")
     )
     allowed_origins = _csv_env("HUNTLOOP_ALLOWED_ORIGINS", ())
+    allow_private_endpoint = _bool_env("HUNTLOOP_ALLOW_PRIVATE_ENDPOINT")
     run_spend_cap_usd = _optional_positive_decimal_env("HUNTLOOP_RUN_SPEND_CAP_USD")
 
     return Config(
@@ -243,6 +256,7 @@ def load_config() -> Config:
         timezone=timezone,
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
+        allow_private_endpoint=allow_private_endpoint,
         run_spend_cap_usd=run_spend_cap_usd,
     )
 

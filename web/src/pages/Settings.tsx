@@ -19,6 +19,7 @@ import { SettingsSection } from "./settings/SettingsSection"
 interface ApiAccess {
   base_url: string
   has_api_key: boolean
+  api_key_reentry_required: boolean
 }
 interface Models {
   triage: string
@@ -238,6 +239,12 @@ export default function Settings() {
                 Stored encrypted. It is never shown again — leave blank to keep
                 the current key.
               </p>
+              {settings.api_access.api_key_reentry_required && (
+                <p className="text-xs text-warning text-pretty">
+                  Base URL changed — re-enter your API key so it can be used with
+                  the new endpoint.
+                </p>
+              )}
             </div>
           </>
         )}

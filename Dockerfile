@@ -42,6 +42,13 @@ COPY scripts ./scripts
 COPY --from=webbuild /web/dist ./web/dist
 
 RUN mkdir -p /data
+
+# T-04-07: run as a non-root user. /app (code + baked SPA) is read-only at
+# runtime; /data is the writable volume.
+RUN useradd --create-home --uid 10001 huntloop \
+    && chown -R huntloop:huntloop /app /data
+USER huntloop
+
 VOLUME ["/data"]
 
 # Deliberately no default CMD: this one image serves the one-shot `migrate`

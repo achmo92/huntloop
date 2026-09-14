@@ -24,16 +24,21 @@ from huntloop.api.deps import get_credentials_session, get_session
 from huntloop.config import (
     Config,
     ConfigError,
+    load_config,
     load_effective_config,
     parse_run_at,
-    resolve_llm_api_key,
 )
 from huntloop.credentials.store import CredentialStore
 from huntloop.db.repository import SettingsRepository
+from huntloop.fetching.url_guard import UnsafeUrlError, assert_fetch_url_allowed
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 _API_KEY = "openai_api_key"
+# T-04-04: the base URL the stored key was saved for. An extra Setting row that
+# `load_effective_config` ignores (it only reads SETTING_KEY_TO_FIELD), so no
+# migration is required.
+_API_KEY_BASE_URL = "openai_api_key_base_url"
 
 # GAP-5: the typed fallback when the configured provider's /models cannot be
 # read. Common OpenAI-compatible ids — the model picker's escape hatch covers
@@ -55,6 +60,10 @@ FALLBACK_MODELS: tuple[str, ...] = (
 class ApiAccessOut(BaseModel):
     base_url: str
     has_api_key: bool
+    # T-04-04: true when a stored/env key exists but the effective base URL no
+    # longer matches the one the key was saved for — the UI asks the user to
+    # re-enter it before the key can be used again.
+    api_key_reentry_required: bool
 
 
 class ModelsOut(BaseModel):
@@ -122,6 +131,44 @@ def _has_api_key(credentials_session: Session) -> bool:
     return bool(os.environ.get("HUNTLOOP_OPENAI_API_KEY"))
 
 
+def _bound_base_url(session: Session) -> str | None:
+    """The base URL the stored key was saved for (None when never bound)."""
+    return SettingsRepository(session).get_value(_API_KEY_BASE_URL)
+
+
+def _resolve_key_for_base(
+    cfg: Config, credentials_session: Session, session: Session
+) -> str | None:
+    """The API key usable for ``cfg.openai_base_url``, or None.
+
+    T-04-04: a stored key is returned ONLY when the base URL it was saved for
+    equals the effective base URL — so changing the base URL never forwards the
+    key to a new (possibly attacker-controlled) endpoint until the user
+    re-enters it. The env fallback key is used only while the effective base URL
+    still matches the env default.
+    """
+    store = CredentialStore(credentials_session)
+    if store.has(_API_KEY):
+        if _bound_base_url(session) == cfg.openai_base_url:
+            return store.get(_API_KEY)
+        return None
+    env_key = os.environ.get("HUNTLOOP_OPENAI_API_KEY")
+    if env_key and cfg.openai_base_url == load_config().openai_base_url:
+        return env_key
+    return None
+
+
+def _reentry_required(
+    cfg: Config, credentials_session: Session, session: Session
+) -> bool:
+    """True when an existing key no longer matches the effective base URL."""
+    if CredentialStore(credentials_session).has(_API_KEY):
+        return _bound_base_url(session) != cfg.openai_base_url
+    if os.environ.get("HUNTLOOP_OPENAI_API_KEY"):
+        return cfg.openai_base_url != load_config().openai_base_url
+    return False
+
+
 def _models_out(cfg: Config) -> ModelsOut:
     return ModelsOut(
         triage=cfg.triage_model,
@@ -152,6 +199,25 @@ def _validate_base_url(value: str) -> str:
                 "routes through one OpenAI-compatible endpoint."
             ),
         )
+    # T-04-04: the stored key is sent to this endpoint, so require https and a
+    # public address unless the operator explicitly opts into a private endpoint.
+    if load_config().allow_private_endpoint:
+        return url
+    if not url.startswith("https://"):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Base URL must use https:// because the API key is sent to this "
+                "endpoint. Set HUNTLOOP_ALLOW_PRIVATE_ENDPOINT to allow a private "
+                "endpoint."
+            ),
+        )
+    try:
+        assert_fetch_url_allowed(url)
+    except UnsafeUrlError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"Base URL is not allowed: {exc}"
+        ) from exc
     return url
 
 
@@ -204,6 +270,9 @@ def read_settings(
         api_access=ApiAccessOut(
             base_url=cfg.openai_base_url,
             has_api_key=_has_api_key(credentials_session),
+            api_key_reentry_required=_reentry_required(
+                cfg, credentials_session, session
+            ),
         ),
         models=_models_out(cfg),
         schedule=_schedule_out(cfg),
@@ -224,10 +293,9 @@ def read_available_models(
     options; free-text entry remains the escape hatch for custom endpoints.
     """
     cfg = load_effective_config(session)
-    try:
-        api_key: str | None = resolve_llm_api_key(credentials_session)
-    except ConfigError:
-        api_key = None
+    # T-04-04: the key is only ever handed to the proxy for the base URL it was
+    # bound to; a mismatch degrades straight to the typed fallback.
+    api_key = _resolve_key_for_base(cfg, credentials_session, session)
 
     provider_models: list[str] | None = None
     if api_key:
@@ -275,11 +343,15 @@ def update_api_access(
         # harness would otherwise hold a write lock across the second store.
         credentials_session.commit()
         repo.set_secret_metadata(_API_KEY)
+        # T-04-04: bind the key to the effective base URL at save time so a
+        # later base-URL change cannot forward it anywhere else.
+        repo.set_value(_API_KEY_BASE_URL, load_effective_config(session).openai_base_url)
     session.commit()
     cfg = load_effective_config(session)
     return ApiAccessOut(
         base_url=cfg.openai_base_url,
         has_api_key=_has_api_key(credentials_session),
+        api_key_reentry_required=_reentry_required(cfg, credentials_session, session),
     )
 
 
