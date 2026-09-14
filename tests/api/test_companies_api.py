@@ -745,3 +745,47 @@ def test_no_delete_verb_is_mounted(client):
     for path, methods in paths.items():
         if path.startswith("/api/companies"):
             assert "delete" not in methods, f"DELETE {path} must not exist"
+
+
+# ---------------------------------------------------------------------------
+# T-04-03: user-supplied careers URLs are SSRF-guarded (422 on private targets)
+# ---------------------------------------------------------------------------
+
+
+def test_add_company_rejects_private_careers_url(client):
+    resp = client.post(
+        "/api/companies",
+        json={"name": "X", "careers_url": "http://169.254.169.254/"},
+    )
+    assert resp.status_code == 422
+    assert client.get("/api/companies").json() == []
+
+
+def test_batch_add_rejects_private_careers_url(client):
+    resp = client.post(
+        "/api/companies/batch",
+        json={"names": ["X"], "careers_urls": {"X": "http://10.0.0.1/"}},
+    )
+    assert resp.status_code == 422
+    assert client.get("/api/companies").json() == []
+
+
+def test_patch_rejects_private_careers_url(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Acme")
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.patch(
+        f"/api/companies/{company_id}", json={"careers_url": "http://192.168.1.1/"}
+    )
+    assert resp.status_code == 422
+
+    session = make_session()
+    try:
+        assert session.get(Company, company_id).careers_url is None
+    finally:
+        session.close()
