@@ -169,7 +169,7 @@ export function ProposalCard({
             <Button disabled={busy} onClick={approve}>Approve change</Button>
           </div>
           {error ? (
-            <p className="basis-full text-sm text-destructive">
+            <p role="alert" className="basis-full text-sm text-destructive">
               That didn't save. Try again.
             </p>
           ) : null}
