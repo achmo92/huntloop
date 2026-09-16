@@ -28,6 +28,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import event, func, select
+from tests.loop.factories import (  # noqa: F401  (loop_session is a pytest fixture)
+    default_payload,
+    loop_session,
+    make_company,
+    make_criteria,
+    make_job,
+    make_transitions,
+)
+from tests.loop.test_rationale import FakeLlmClient
 
 import huntloop.loop.generate as generate_mod
 import huntloop.loop.rationale as rationale_mod
@@ -51,15 +60,6 @@ from huntloop.loop.types import (
     Signal,
     build_proposed_changes,
 )
-from tests.loop.factories import (  # noqa: F401  (loop_session is a pytest fixture)
-    default_payload,
-    loop_session,
-    make_company,
-    make_criteria,
-    make_job,
-    make_transitions,
-)
-from tests.loop.test_rationale import FakeLlmClient
 
 FIRST_SEEN = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
