@@ -151,7 +151,7 @@ def test_apply_does_not_mutate_input():
 # ---------------------------------------------------------------------------
 
 
-def test_accept_proposal_creates_new_version():
+def test_accept_proposal_creates_new_version(loop_session):
     session = loop_session
     previous = make_criteria(session)
     proposal = _make_proposal(session)
@@ -164,7 +164,7 @@ def test_accept_proposal_creates_new_version():
     assert active[0] == version
 
 
-def test_accept_proposal_source_is_proposal_accepted():
+def test_accept_proposal_source_is_proposal_accepted(loop_session):
     session = loop_session
     make_criteria(session)
     proposal = _make_proposal(session)
@@ -177,7 +177,7 @@ def test_accept_proposal_source_is_proposal_accepted():
     assert row.source == CriteriaSource.PROPOSAL_ACCEPTED
 
 
-def test_accept_proposal_stamps_the_proposal():
+def test_accept_proposal_stamps_the_proposal(loop_session):
     session = loop_session
     make_criteria(session)
     proposal = _make_proposal(session)
@@ -190,7 +190,7 @@ def test_accept_proposal_stamps_the_proposal():
     assert proposal.resulting_version == version
 
 
-def test_accept_proposal_preserves_prior_version():
+def test_accept_proposal_preserves_prior_version(loop_session):
     session = loop_session
     previous = make_criteria(session)
     prior_row = session.execute(
@@ -209,7 +209,7 @@ def test_accept_proposal_preserves_prior_version():
     assert still_there.is_active is False
 
 
-def test_accept_non_pending_raises():
+def test_accept_non_pending_raises(loop_session):
     session = loop_session
     previous = make_criteria(session)
     rejected = _make_proposal(session, status=ProposalStatus.REJECTED)
@@ -225,7 +225,7 @@ def test_accept_non_pending_raises():
     assert session.execute(select(func.count()).select_from(Criteria)).scalar_one() == 1
 
 
-def test_accept_with_no_active_criteria_raises():
+def test_accept_with_no_active_criteria_raises(loop_session):
     session = loop_session
     proposal = _make_proposal(session)
 
