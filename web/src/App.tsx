@@ -10,6 +10,7 @@ import Criteria from "@/pages/Criteria"
 import Dashboard from "@/pages/Dashboard"
 import Employers from "@/pages/Employers"
 import Listings from "@/pages/Listings"
+import ProposalsPage from "@/pages/proposals/ProposalsPage"
 import Runs from "@/pages/Runs"
 import Settings from "@/pages/Settings"
 
@@ -22,6 +23,7 @@ export const routes: RouteObject[] = [
       { path: "listings", element: <Listings /> },
       { path: "employers", element: <Employers /> },
       { path: "criteria", element: <Criteria /> },
+      { path: "proposals", element: <ProposalsPage /> },
       { path: "runs", element: <Runs /> },
       { path: "settings", element: <Settings /> },
       // GAP-3: Get Started was merged into Criteria. Old links land here.

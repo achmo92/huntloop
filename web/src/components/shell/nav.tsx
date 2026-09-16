@@ -5,11 +5,12 @@ import {
   ListIcon,
   SettingsIcon,
   SlidersHorizontalIcon,
+  SparklesIcon,
   type LucideIcon,
 } from "lucide-react"
 
 /**
- * The single source of the six-section navigation (GAP-17.1). The sidebar and
+ * The single source of the seven-section navigation (GAP-17.1). The sidebar and
  * the mobile drawer both map this list, so an entry can never drift between the
  * two. `context` is the one-line product-language summary the header shows.
  */
@@ -46,6 +47,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Criteria",
     icon: SlidersHorizontalIcon,
     context: "What you're looking for",
+  },
+  {
+    to: "/proposals",
+    label: "Proposals",
+    icon: SparklesIcon,
+    context: "Suggested changes to your criteria",
   },
   {
     to: "/runs",
