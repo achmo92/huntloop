@@ -27,11 +27,11 @@ from tests.loop.factories import (  # noqa: F401  (loop_session is a pytest fixt
 FIRST_SEEN = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
 
-def _job_with_history(session, *, name, title, pairs, start):
+def _job_with_history(session, *, name, title, pairs, start, step_days=1.0):
     """Insert a job first seen on FIRST_SEEN together with its transitions."""
     company = make_company(session, name=name)
     job = make_job(session, company=company, title=title, first_seen_at=FIRST_SEEN)
-    events = make_transitions(session, job, pairs, start=start)
+    events = make_transitions(session, job, pairs, start=start, step_days=step_days)
     return job, events
 
 
@@ -73,6 +73,7 @@ def test_shortlisted_fast_reject(loop_session):
             (JobStatus.SHORTLISTED, JobStatus.REJECTED),
         ],
         start=FIRST_SEEN + timedelta(days=1),
+        step_days=3.0,
     )
 
     result = _classify(job, events)
