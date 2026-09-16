@@ -44,6 +44,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 minversion = "9.0"
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra"
 markers = [
     "postgres: requires a live Postgres container via testcontainers (needs local Docker)",
