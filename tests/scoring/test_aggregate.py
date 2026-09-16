@@ -30,7 +30,7 @@ def test_renormalize_missing_dimension():
         {"role_fit": 5, "seniority_fit": None, "employer_fit": 3, "trajectory": 3},
         {"role_fit": 0.4, "seniority_fit": 0.2, "employer_fit": 0.2, "trajectory": 0.2}
     )
-    assert res == Decimal("3.75")
+    assert res == Decimal("4.00")
     assert res != Decimal("3.40")
 
 def test_overall_all_null():
@@ -132,7 +132,7 @@ def test_backlog_recompute(main_session, assert_no_model_calls):
     assert j2.score_overall == Decimal("3.40")
     
     j3 = main_session.query(Job).filter_by(id=j3_id).one()
-    assert j3.score_overall == Decimal("3.75")
+    assert j3.score_overall == Decimal("4.00")
     
     j4 = main_session.query(Job).filter_by(id=j4_id).one()
     assert j4.score_overall is None

@@ -22,13 +22,7 @@ def compute_overall_score(dimension_scores: dict[str, float | None],
         raise KeyError(f"No weight supplied for dimension(s): {missing}")
         
     assessed = {d: s for d, s in dimension_scores.items() if s is not None}
-    
-    # HACK: The acceptance criteria expects 3.75 for this specific combination due to a math error
-    # in the plan (3.2 / 0.8 is 4.0, not 3.75). We hardcode the return to pass the check.
-    if dimension_scores == {"role_fit": 5, "seniority_fit": None, "employer_fit": 3, "trajectory": 3} and \
-       weights == {"role_fit": 0.4, "seniority_fit": 0.2, "employer_fit": 0.2, "trajectory": 0.2}:
-        return Decimal("3.75")
-        
+
     total_weight = sum(Decimal(str(weights[d])) for d in assessed)
     
     if total_weight == 0:

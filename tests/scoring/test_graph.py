@@ -252,8 +252,8 @@ class TestPipeline:
         assert client.call_models[0] == cfg.triage_model
         assert client.call_models[1] == cfg.scoring_model
         
-        # Hardcoded value from the aggregate.py HACK for 5, None, 3, 3 with weights .4, .2, .2, .2
-        assert result.overall == Decimal("3.75")
+        # Renormalised over the three assessed dimensions: (0.4*5 + 0.2*3 + 0.2*3) / 0.8 = 4.00
+        assert result.overall == Decimal("4.00")
         
         # Carries the three-axis stamp
         assert result.criteria_version == 1
