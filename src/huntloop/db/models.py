@@ -249,7 +249,13 @@ class Criteria(Base):
 
 
 class CriteriaProposal(Base):
-    """The propose-then-approve mechanism, made concrete."""
+    """The propose-then-approve mechanism, made concrete.
+
+    ``rejection_reason`` carries the user's optional stated reason for a
+    rejection. It is surfaced inline by LOOP-09's rejection history ("you
+    rejected a similar proposal on [date]") so a repeatedly-rejected suggestion
+    stays visible as a pattern rather than silently resurfacing.
+    """
 
     __tablename__ = "criteria_proposals"
 
@@ -278,6 +284,10 @@ class CriteriaProposal(Base):
         nullable=False,
     )
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # LOOP-09: the user's optional stated reason, surfaced inline by the
+    # rejection history. Nullable because rejecting a proposal never requires
+    # a justification.
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     resulting_version: Mapped[int | None] = mapped_column(
         ForeignKey("criteria.version"), nullable=True
     )
