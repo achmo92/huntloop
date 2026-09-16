@@ -60,6 +60,26 @@ def _score_dimensions(role_fit: float) -> dict[str, float]:
     }
 
 
+def _age_payload(session, current: int, proposed: int) -> dict:
+    """The Tier A payload for a ``posting_age_days`` proposal."""
+    return pe.predict_filter_change(
+        session,
+        field="posting_age_days",
+        current_value=current,
+        proposed_value=proposed,
+        now=FIXED_NOW,
+    )
+
+
+def _weights_payload(session) -> dict:
+    """The Tier D payload for a ``role_fit`` 3.0 -> 4.0 proposal."""
+    return pe.predict_score_change(
+        session,
+        current_value=CURRENT_WEIGHTS,
+        proposed_value=PROPOSED_WEIGHTS,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tier A — deterministic filter dry-run
 # ---------------------------------------------------------------------------
@@ -68,11 +88,7 @@ def _score_dimensions(role_fit: float) -> dict[str, float]:
 def test_tier_a_posting_age_counts_exclusions(loop_session):
     _age_backlog(loop_session, [1, 5, 9, 12, 15, 18, 25, 35, 40, 60])
 
-    payload = pe.predict_effect(
-        loop_session,
-        {"field": "posting_age_days", "current_value": 30, "proposed_value": 20},
-        now=FIXED_NOW,
-    )
+    payload = _age_payload(loop_session, 30, 20)
 
     assert payload["kind"] == "filter_dry_run"
     assert payload["field"] == "posting_age_days"
@@ -89,11 +105,7 @@ def test_tier_a_posting_age_counts_exclusions(loop_session):
 def test_tier_a_loosening_counts_inclusions(loop_session):
     _age_backlog(loop_session, [1, 5, 9, 12, 15, 18, 25, 35, 40, 60])
 
-    payload = pe.predict_effect(
-        loop_session,
-        {"field": "posting_age_days", "current_value": 30, "proposed_value": 45},
-        now=FIXED_NOW,
-    )
+    payload = _age_payload(loop_session, 30, 45)
 
     # 35d and 40d come back in; 60d was and remains excluded.
     assert payload["would_include"] == 2
@@ -118,11 +130,7 @@ def test_tier_a_excludes_rejected_and_withdrawn_jobs(loop_session):
         posted_at=_days_ago(25),
     )
 
-    payload = pe.predict_effect(
-        loop_session,
-        {"field": "posting_age_days", "current_value": 30, "proposed_value": 20},
-        now=FIXED_NOW,
-    )
+    payload = _age_payload(loop_session, 30, 20)
 
     assert payload["backlog_size"] == 1
     assert payload["would_exclude"] == 1
@@ -149,20 +157,18 @@ def test_tier_a_geography_uses_persisted_columns_only(loop_session, monkeypatch)
 
     monkeypatch.setattr(pe, "normalize_location", _spy)
 
-    payload = pe.predict_effect(
+    payload = pe.predict_filter_change(
         loop_session,
-        {
-            "field": "locations",
-            "current_value": {
-                "eligible_countries": ["US"],
-                "eligible_regions": [],
-                "preferred_cities": [],
-            },
-            "proposed_value": {
-                "eligible_countries": ["DE"],
-                "eligible_regions": [],
-                "preferred_cities": [],
-            },
+        field="locations",
+        current_value={
+            "eligible_countries": ["US"],
+            "eligible_regions": [],
+            "preferred_cities": [],
+        },
+        proposed_value={
+            "eligible_countries": ["DE"],
+            "eligible_regions": [],
+            "preferred_cities": [],
         },
     )
 
@@ -182,11 +188,7 @@ def test_tier_a_geography_uses_persisted_columns_only(loop_session, monkeypatch)
 def test_tier_a_sample_is_capped_and_json_safe(loop_session):
     _age_backlog(loop_session, [25] * 20)
 
-    payload = pe.predict_effect(
-        loop_session,
-        {"field": "posting_age_days", "current_value": 30, "proposed_value": 20},
-        now=FIXED_NOW,
-    )
+    payload = _age_payload(loop_session, 30, 20)
 
     assert payload["would_exclude"] == 20
     assert len(payload["sample"]) == pe.SAMPLE_CAP
@@ -214,14 +216,7 @@ def test_tier_d_counts_affected_and_deltas(loop_session):
             score_overall=Decimal("3.50") if role_fit == 1.0 else Decimal("4.25"),
         )
 
-    payload = pe.predict_effect(
-        loop_session,
-        {
-            "field": "dimension_weights",
-            "current_value": CURRENT_WEIGHTS,
-            "proposed_value": PROPOSED_WEIGHTS,
-        },
-    )
+    payload = _weights_payload(loop_session)
 
     assert payload["kind"] == "score_recompute"
     assert payload["field"] == "dimension_weights"
@@ -256,14 +251,7 @@ def test_tier_d_writes_nothing(loop_session):
 
     before = _snapshot()
 
-    pe.predict_effect(
-        loop_session,
-        {
-            "field": "dimension_weights",
-            "current_value": CURRENT_WEIGHTS,
-            "proposed_value": PROPOSED_WEIGHTS,
-        },
-    )
+    _weights_payload(loop_session)
 
     assert not loop_session.dirty
     assert not loop_session.new
@@ -294,14 +282,7 @@ def test_tier_d_skips_unscoreable_jobs(loop_session):
         score_overall=Decimal("3.50"),
     )
 
-    payload = pe.predict_effect(
-        loop_session,
-        {
-            "field": "dimension_weights",
-            "current_value": CURRENT_WEIGHTS,
-            "proposed_value": PROPOSED_WEIGHTS,
-        },
-    )
+    payload = _weights_payload(loop_session)
 
     assert payload["backlog_size"] == 3
     assert payload["skipped"] == 2
@@ -319,14 +300,7 @@ def test_tier_d_signs_are_preserved(loop_session):
             score_overall=Decimal("3.50"),
         )
 
-    payload = pe.predict_effect(
-        loop_session,
-        {
-            "field": "dimension_weights",
-            "current_value": CURRENT_WEIGHTS,
-            "proposed_value": PROPOSED_WEIGHTS,
-        },
-    )
+    payload = _weights_payload(loop_session)
 
     # Raising the weight of a badly-scoring dimension lowers the overall.
     assert payload["mean_delta"] < 0
