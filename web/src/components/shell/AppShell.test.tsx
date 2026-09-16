@@ -5,12 +5,13 @@ import { createMemoryRouter, RouterProvider } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { AppShell } from "@/components/shell/AppShell"
+import { NAV_ITEMS } from "@/components/shell/nav"
 
 /**
- * The shell is the frame every page is read inside: six icon+label entries, one
- * unmistakable active route, a fold that remembers itself, a mobile drawer, and
- * a header that carries the current section's context without competing with
- * the page's own <h1>.
+ * The shell is the frame every page is read inside: seven icon+label entries,
+ * one unmistakable active route, a fold that remembers itself, a mobile drawer,
+ * and a header that carries the current section's context without competing
+ * with the page's own <h1>.
  */
 
 const SECTIONS = [
@@ -18,6 +19,7 @@ const SECTIONS = [
   "Listings",
   "Employers",
   "Criteria",
+  "Proposals",
   "Runs",
   "Settings",
 ]
@@ -38,6 +40,7 @@ function renderShell(path: string) {
           { path: "listings", element: <div>listings content</div> },
           { path: "employers", element: <div>employers content</div> },
           { path: "criteria", element: <div>criteria content</div> },
+          { path: "proposals", element: <div>proposals content</div> },
           { path: "runs", element: <div>runs content</div> },
           { path: "settings", element: <div>settings content</div> },
         ],
@@ -67,13 +70,22 @@ describe("AppShell sidebar", () => {
     document.documentElement.className = ""
   })
 
-  it("exposes all six sections as icon+label links", () => {
+  it("exposes all seven sections as icon+label links", () => {
     renderShell("/")
     for (const label of SECTIONS) {
       const links = screen.getAllByRole("link", { name: label })
       expect(links.length).toBeGreaterThan(0)
       expect(links[0].querySelector("svg")).not.toBeNull()
     }
+  })
+
+  it("places Proposals between Criteria and Runs in the nav", () => {
+    const labels = NAV_ITEMS.map((item) => item.label)
+    const proposals = labels.indexOf("Proposals")
+    expect(proposals).toBeGreaterThan(-1)
+    expect(proposals).toBe(labels.indexOf("Criteria") + 1)
+    expect(proposals).toBe(labels.indexOf("Runs") - 1)
+    expect(NAV_ITEMS[proposals].to).toBe("/proposals")
   })
 
   it("marks exactly one active route with aria-current='page'", () => {
@@ -127,7 +139,7 @@ describe("AppShell mobile drawer", () => {
     document.documentElement.className = ""
   })
 
-  it("opens the same six-section nav from the header trigger", async () => {
+  it("opens the same seven-section nav from the header trigger", async () => {
     const user = userEvent.setup()
     renderShell("/listings")
 

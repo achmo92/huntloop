@@ -54,6 +54,7 @@ function renderAt(path: string) {
     if (requestPath === "/api/companies") return []
     if (requestPath === "/api/criteria")
       return { current: null, total_versions: 0 }
+    if (requestPath.startsWith("/api/proposals")) return []
     return []
   })
   const client = new QueryClient({
@@ -71,13 +72,14 @@ function renderAt(path: string) {
 }
 
 describe("App", () => {
-  it("renders nav with all six section labels", () => {
+  it("renders nav with all seven section labels", () => {
     renderAt("/")
     for (const label of [
       "Dashboard",
       "Listings",
       "Employers",
       "Criteria",
+      "Proposals",
       "Runs",
       "Settings",
     ]) {
@@ -111,6 +113,13 @@ describe("App", () => {
     await user.click(screen.getAllByRole("link", { name: "Settings" })[0])
     expect(
       await screen.findByRole("heading", { name: "Settings" })
+    ).toBeInTheDocument()
+  })
+
+  it("renders the Proposals review page at /proposals (UI-03)", async () => {
+    renderAt("/proposals")
+    expect(
+      await screen.findByRole("heading", { name: "Proposals" })
     ).toBeInTheDocument()
   })
 })
