@@ -28,6 +28,7 @@ from huntloop.api.routers import (
     feedback,
     jobs,
     onboarding,
+    proposals,
     runs,
     settings,
 )
@@ -93,6 +94,8 @@ def create_app() -> FastAPI:
     # Registered ahead of the SPA mount below, which must stay last or its
     # catch-all swallows every new API route.
     app.include_router(feedback.router)
+    # Phase 5: the proposal review API (LOOP-07 accept/reject, LOOP-09 history).
+    app.include_router(proposals.router)
 
     # Serve the built frontend only when it exists. The guard keeps tests and
     # bare-backend runs independent of any frontend build (plan 04-11 fills
