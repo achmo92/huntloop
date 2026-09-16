@@ -22,7 +22,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from huntloop.criteria.schema import DimensionWeights
+from huntloop.criteria.schema import CompensationFloor, DimensionWeights
 from huntloop.db.models import CompPeriod, JobStatus
 from huntloop.loop.detect import (
     EVIDENCE_LISTING_CAP,
@@ -70,6 +70,13 @@ ROLE_FIT_LOW = {
 def _score_flags(*raised: str) -> dict[str, dict]:
     """A full six-key score_flags payload with only ``raised`` set true."""
     return {name: {"raised": name in raised, "detail": ""} for name in _FLAG_NAMES}
+
+
+def _floor(amount: str) -> CompensationFloor:
+    """A USD/annual compensation floor at ``amount``."""
+    return CompensationFloor(
+        amount=Decimal(amount), currency="USD", period="annual"
+    )
 
 
 def _fast_reject(
@@ -297,7 +304,7 @@ def test_track_b_never_crosses_min(loop_session):
 
 def test_track_b_comp_floor_uses_median(loop_session):
     """The new floor is the median comp_min of the flagged, comparable listings."""
-    make_criteria(loop_session, default_payload())
+    make_criteria(loop_session, default_payload(compensation_floor=_floor("100000")))
     for index, amount in enumerate(("120000", "130000", "140000", "150000")):
         _fast_reject(
             loop_session,
@@ -323,7 +330,7 @@ def test_track_b_comp_floor_uses_median(loop_session):
 
 def test_track_b_comp_floor_skips_mixed_currency(loop_session):
     """Never compare across currencies — a mixed set produces no proposal."""
-    make_criteria(loop_session, default_payload())
+    make_criteria(loop_session, default_payload(compensation_floor=_floor("100000")))
     for index, (amount, currency) in enumerate(
         (("120000", "USD"), ("130000", "USD"), ("140000", "USD"), ("150000", "EUR"))
     ):
