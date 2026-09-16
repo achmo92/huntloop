@@ -225,11 +225,12 @@ def build_fallback_rationale(candidate, evidence, predicted_effect) -> str:
     configured or the model failed. ``rationale`` is NOT NULL, so this is the
     last line of defence: it must never be empty, for any permitted field.
     """
-    parts = [
+    headline = (
         f"{candidate.observation_count} listings support changing {candidate.field} "
         f"from {_format_value(candidate.current_value)} to "
         f"{_format_value(candidate.proposed_value)} ({candidate.threshold} needed)."
-    ]
+    )
+    parts = [headline]
 
     quotes = evidence.get("feedback_quotes") if isinstance(evidence, dict) else None
     if quotes:
