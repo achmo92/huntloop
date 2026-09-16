@@ -1328,3 +1328,150 @@ class TestSpendCapLedger:
         assert "mystery-model" in run.error_summary
         assert "no price table entry" in run.error_summary
         assert run.cost_usd is not None
+
+
+# ---------------------------------------------------------------------------
+# D-06: proposal generation is run_discovery's last step and cannot fail a run
+# ---------------------------------------------------------------------------
+
+
+class _StoppingGraph:
+    """A compiled-graph stand-in whose invoke always reports a user stop."""
+
+    def invoke(self, state, config=None):
+        from huntloop.graph.cancellation import RunStoppedByUser
+
+        raise RunStoppedByUser()
+
+
+class TestProposalGenerationHook:
+    """The D-06 hook: after the summary exists, before artifact cleanup.
+
+    Generation reads run-scoped rows (evidence names the run's listings), so it
+    must run before ``_clear_run_artifacts``; and because it is a cheap
+    afterthought, its failure must be invisible to the run's own outcome.
+    """
+
+    def test_run_discovery_invokes_proposal_generation(self, sessionmaker, default_criteria, monkeypatch):
+        """A successful run calls generate_proposals exactly once, for its own run."""
+        import huntloop.graph.build as build_mod
+
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            make_company(session, "GenCo", slug="genco")
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"genco": [make_listing("genco-1")]}),
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+
+        calls: list[uuid.UUID | None] = []
+
+        def recorder(session, *, run_id=None, llm_client=None, now=None):
+            calls.append(run_id)
+            return []
+
+        monkeypatch.setattr(build_mod, "generate_proposals", recorder)
+
+        summary = build_mod.run_discovery(
+            sessionmaker=sessionmaker, llm_client=client, http_client=MagicMock()
+        )
+
+        assert summary.status == "success"
+        assert calls == [uuid.UUID(summary.run_id)]
+
+    def test_run_discovery_survives_proposal_failure(self, sessionmaker, default_criteria, monkeypatch):
+        """A raising hook is logged, not fatal: the run still finishes SUCCESS."""
+        import huntloop.graph.build as build_mod
+
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            make_company(session, "SurviveCo", slug="survive")
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"survive": [make_listing("survive-1")]}),
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+
+        def exploding(session, *, run_id=None, llm_client=None, now=None):
+            raise RuntimeError("proposal generation exploded")
+
+        monkeypatch.setattr(build_mod, "generate_proposals", exploding)
+
+        summary = build_mod.run_discovery(
+            sessionmaker=sessionmaker, llm_client=client, http_client=MagicMock()
+        )
+
+        assert summary.status == "success"
+        assert summary.new_jobs_written == 1
+        run = get_run(sessionmaker, uuid.UUID(summary.run_id))
+        assert run.status is RunStatus.SUCCESS
+        assert run.status is not RunStatus.FAILED
+
+    def test_proposal_generation_skipped_when_run_stopped(self, sessionmaker, default_criteria, monkeypatch):
+        """A stop short-circuits before generation — nothing is created for it."""
+        import huntloop.graph.build as build_mod
+
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            make_company(session, "StopCo", slug="stopco")
+        finally:
+            session.close()
+
+        calls: list[uuid.UUID | None] = []
+
+        def recorder(session, *, run_id=None, llm_client=None, now=None):
+            calls.append(run_id)
+            return []
+
+        monkeypatch.setattr(build_mod, "generate_proposals", recorder)
+        monkeypatch.setattr(build_mod, "build_graph", lambda **kwargs: _StoppingGraph())
+
+        summary = build_mod.run_discovery(
+            sessionmaker=sessionmaker, llm_client=object(), http_client=MagicMock()
+        )
+
+        assert summary.status == RunStatus.STOPPED.value
+        assert calls == []
+
+    def test_generation_runs_before_artifact_cleanup(self, sessionmaker, default_criteria, monkeypatch):
+        """Generation precedes cleanup: it reads run-scoped rows cleanup removes."""
+        import huntloop.graph.build as build_mod
+
+        seed_criteria(sessionmaker, default_criteria)
+        session = sessionmaker()
+        try:
+            make_company(session, "OrderCo", slug="orderco")
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            nodes_mod, "get_adapter",
+            lambda platform: FakeAdapter(listings_by_slug={"orderco": [make_listing("orderco-1")]}),
+        )
+        client = RecordingClient(triage=[TRIAGE_KEEP], scoring=[dims_response(4)])
+
+        order: list[str] = []
+        monkeypatch.setattr(
+            build_mod, "generate_proposals",
+            lambda session, *, run_id=None, llm_client=None, now=None: order.append("generate") or [],
+        )
+        monkeypatch.setattr(
+            build_mod, "_clear_run_artifacts",
+            lambda *args, **kwargs: order.append("cleanup"),
+        )
+
+        build_mod.run_discovery(
+            sessionmaker=sessionmaker, llm_client=client, http_client=MagicMock()
+        )
+
+        assert order == ["generate", "cleanup"]

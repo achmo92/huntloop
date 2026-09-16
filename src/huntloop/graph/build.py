@@ -40,6 +40,7 @@ from huntloop.graph.nodes import (
     process_employer,
     run_status,
 )
+from huntloop.loop.generate import generate_proposals
 from huntloop.scoring.spend_cap import SpendTracker
 
 if TYPE_CHECKING:
@@ -305,6 +306,26 @@ def run_discovery(
             status=run_status(results).value,
             top_listings=_load_top_listings(sessionmaker, run_id),
         )
+
+        # D-06: proposal generation is the last, cheapest step of a run. It reads
+        # only already-stored rows and must never be able to fail a successful
+        # discovery run. Its own session, mirroring how finalize_run does its
+        # terminal write — never the graph's (those are already closed). The
+        # except below is deliberately broad: a discovered-and-scored run must
+        # still return its summary even if the loop module raises, and
+        # logger.exception keeps the traceback rather than swallowing it.
+        gen_session = sessionmaker()
+        try:
+            created = generate_proposals(gen_session, run_id=run_id, llm_client=llm_client, now=now)
+        except Exception:
+            logger.exception(
+                "run %s: proposal generation failed; run result is unaffected", run_id
+            )
+        else:
+            if created:
+                logger.info("run %s generated %d criteria proposal(s)", run_id, len(created))
+        finally:
+            gen_session.close()
 
         # GAP-15/GAP-16: the run is terminal, so its lease is no longer needed,
         # and any lingering stop request for it must not affect a later run.
