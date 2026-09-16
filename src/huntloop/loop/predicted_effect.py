@@ -202,6 +202,167 @@ def predict_filter_change(
 
 
 # ---------------------------------------------------------------------------
+# Tier B — advisory-flag recompute
+# ---------------------------------------------------------------------------
+
+
+def _seniority_flag_raised(detected: str, bound: str | None, *, ceiling: bool) -> bool:
+    """Whether the scorer's seniority flag would be raised for this title.
+
+    Mirrors the direction rule the scorer applies: a title above the ceiling is
+    a stretch, a title below the floor is a step down. A missing bound means the
+    user expressed no limit on that side, so nothing can be flagged.
+    """
+    if bound is None or bound not in SENIORITY_LADDER:
+        return False
+    detected_index = SENIORITY_LADDER.index(detected)
+    bound_index = SENIORITY_LADDER.index(bound)
+    return detected_index > bound_index if ceiling else detected_index < bound_index
+
+
+def _comp_below_floor(job: Job, floor_value: Any) -> bool | None:
+    """Whether this listing sits below ``floor_value``, or ``None`` if unknown.
+
+    ``None`` is the honest answer for the two non-comparable outcomes: this
+    codebase refuses currency conversion, so "not comparable" is never evidence
+    of "below".
+    """
+    comp = NormalizedCompensation(
+        minimum=job.comp_min,
+        maximum=job.comp_max,
+        currency=job.comp_currency,
+        period=job.comp_period.value if job.comp_period else None,
+        raw=job.comp_raw,
+        source="structured",
+    )
+    comparison = compare_to_floor(comp, CompensationFloor.model_validate(floor_value))
+    if comparison is FloorComparison.BELOW:
+        return True
+    if comparison is FloorComparison.ABOVE:
+        return False
+    return None
+
+
+def predict_flag_change(
+    session,
+    *,
+    field: str,
+    current_value: Any,
+    proposed_value: Any,
+) -> dict[str, Any]:
+    """Before/after advisory-flag deltas for the three seniority/compensation fields.
+
+    The scorer's own flag routine cannot be reused here — it needs a raw listing
+    and a normalised compensation object that only exist mid-run. What *can* be
+    reused, and is, are the same primitives it calls, applied to the columns
+    that did survive on ``Job``, so this recomputation and the scorer's own
+    judgement cannot drift apart.
+
+    ``unknown`` is deliberately separate from both directions: a title the
+    ladder does not recognise, or compensation the floor cannot be compared to,
+    is not evidence either way and must never be counted as one.
+    """
+    live = load_live_backlog(session)
+    ceiling = field == "seniority_max"
+
+    would_flag = 0
+    would_unflag = 0
+    unknown = 0
+
+    for job in live:
+        if field == "compensation_floor":
+            before = _comp_below_floor(job, current_value)
+            after = _comp_below_floor(job, proposed_value)
+        else:
+            detected = detect_seniority(job.title)
+            if detected is None:
+                unknown += 1
+                continue
+            before = _seniority_flag_raised(detected, current_value, ceiling=ceiling)
+            after = _seniority_flag_raised(detected, proposed_value, ceiling=ceiling)
+
+        if before is None or after is None:
+            unknown += 1
+        elif after and not before:
+            would_flag += 1
+        elif before and not after:
+            would_unflag += 1
+
+    return {
+        "kind": "flag_recompute",
+        "field": field,
+        "flag": FIELD_TO_FLAG[field],
+        "would_flag": would_flag,
+        "would_unflag": would_unflag,
+        "unknown": unknown,
+        "backlog_size": len(live),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tier C — honest literal mention count
+# ---------------------------------------------------------------------------
+
+
+def _added_term(current_value: Any, proposed_value: Any) -> str | None:
+    """The single item ``proposed_value`` adds to ``current_value``, if any."""
+    current = set(current_value or [])
+    added = sorted({item for item in (proposed_value or []) if item not in current})
+    return added[0] if added else None
+
+
+def _company_names(session) -> dict[Any, str]:
+    """Id -> name for every employer, so a job's company can be matched by name."""
+    return dict(session.execute(select(Company.id, Company.name)).all())
+
+
+def predict_literal_count(
+    session,
+    *,
+    field: str,
+    current_value: Any,
+    proposed_value: Any,
+) -> dict[str, Any]:
+    """How many live listings literally mention what the proposal would exclude.
+
+    None of these three fields is consumed by the discovery pipeline today, so a
+    filter-style count would be fiction — the change would not actually remove
+    anything. Rather than invent a number, this tier reports the honest mention
+    count and says in ``note`` that the field is informational only. The note's
+    wording is part of the UI copy contract; keep the sentence intact.
+    """
+    live = load_live_backlog(session)
+    term: str | None = None
+    matches = 0
+
+    if field == "exclusions.title_keywords":
+        term = _added_term(current_value, proposed_value)
+        if term is not None:
+            needle = term.casefold()
+            matches = sum(1 for job in live if needle in job.title.casefold())
+    elif field == "exclusions.employers":
+        term = _added_term(current_value, proposed_value)
+        if term is not None:
+            needle = term.casefold()
+            names = _company_names(session)
+            matches = sum(
+                1 for job in live if names.get(job.company_id, "").casefold() == needle
+            )
+    else:
+        matches = sum(1 for job in live if (job.work_auth_required or "").strip())
+
+    return {
+        "kind": "literal_count",
+        "field": field,
+        "term": term,
+        "matches": matches,
+        "enforced": False,
+        "backlog_size": len(live),
+        "note": f"{field} isn't enforced by discovery yet, so this is informational only.",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tier D — in-memory score recompute
 # ---------------------------------------------------------------------------
 
@@ -236,14 +397,12 @@ def predict_score_change(
     current_value: Any,
     proposed_value: Any,
 ) -> dict[str, Any]:
-    """Signed backlog score deltas for a proposed ``dimension_weights`` change.
-
-    This MUST stay an in-memory dry run. ``recompute_backlog_overall_scores()``
-    assigns ``score_overall`` on every Job row and flushes; D-09 requires a
-    prediction that mutates nothing, so it is deliberately never called here.
-    Do not "simplify" this back into that helper — the write is the whole
-    difference between a preview and an applied change.
-    """
+    """Signed backlog score deltas for a proposed ``dimension_weights`` change."""
+    # This MUST stay an in-memory dry run. recompute_backlog_overall_scores()
+    # assigns score_overall on every Job row and flushes; D-09 requires a
+    # prediction that mutates nothing, so it is deliberately never called here.
+    # Do not "simplify" this back into that helper — the write is the whole
+    # difference between a preview and an applied change.
     live = load_live_backlog(session)
     before_weights = _as_weight_mapping(current_value)
     after_weights = _as_weight_mapping(proposed_value)
@@ -286,3 +445,84 @@ def predict_score_change(
         "backlog_size": len(live),
         "skipped": skipped,
     }
+
+
+# ---------------------------------------------------------------------------
+# The dispatcher — total over the enumerated edit surface
+# ---------------------------------------------------------------------------
+
+#: The tier map as data, so the dispatcher's totality is checkable rather than
+#: asserted in prose. The module-scope check below fails at import time the
+#: moment a permitted field is added without a tier — which is what makes "no
+#: proposal reaches the user without a predicted effect" structural.
+FIELD_TIERS: dict[str, str] = {
+    "posting_age_days": "filter_dry_run",
+    "locations": "filter_dry_run",
+    "seniority_min": "flag_recompute",
+    "seniority_max": "flag_recompute",
+    "compensation_floor": "flag_recompute",
+    "exclusions.title_keywords": "literal_count",
+    "exclusions.employers": "literal_count",
+    "work_authorization": "literal_count",
+    "dimension_weights": "score_recompute",
+}
+
+assert set(FIELD_TIERS) == set(PERMITTED_EDIT_FIELDS), (
+    "LOOP-06: every permitted edit field must have a predicted-effect tier"
+)
+
+
+def predict_effect(
+    session,
+    proposed_changes: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Route one proposed change to the tier that can tell the truth about it.
+
+    ``proposed_changes`` is the dict shape stored on ``CriteriaProposal``: a
+    ``field``, a ``current_value`` and a ``proposed_value``. An unenumerated
+    field raises rather than returning an empty payload, so a proposal can never
+    reach the review surface with an invisible blast radius.
+
+    This writes nothing: no transaction is opened and no mutating session method
+    is called on any path.
+    """
+    field = proposed_changes["field"]
+    tier = FIELD_TIERS.get(field)
+    if tier is None:
+        raise UnsupportedEditField(
+            f"{field!r} has no predicted-effect tier. "
+            f"Permitted: {', '.join(PERMITTED_EDIT_FIELDS)}"
+        )
+
+    current_value = proposed_changes.get("current_value")
+    proposed_value = proposed_changes.get("proposed_value")
+
+    if tier == "filter_dry_run":
+        return predict_filter_change(
+            session,
+            field=field,
+            current_value=current_value,
+            proposed_value=proposed_value,
+            now=now,
+        )
+    if tier == "flag_recompute":
+        return predict_flag_change(
+            session,
+            field=field,
+            current_value=current_value,
+            proposed_value=proposed_value,
+        )
+    if tier == "literal_count":
+        return predict_literal_count(
+            session,
+            field=field,
+            current_value=current_value,
+            proposed_value=proposed_value,
+        )
+    return predict_score_change(
+        session,
+        current_value=current_value,
+        proposed_value=proposed_value,
+    )
