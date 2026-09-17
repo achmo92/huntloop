@@ -255,6 +255,17 @@ def test_describe_rejects_empty_text(client):
     assert resp.status_code == 422
 
 
+def test_describe_without_api_key_returns_actionable_503(client, monkeypatch):
+    monkeypatch.delenv("HUNTLOOP_OPENAI_API_KEY", raising=False)
+
+    resp = client.post("/api/criteria/describe", json={"text": "senior backend in Berlin"})
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == (
+        "LLM API access is not configured. Add an API key in Settings → API access."
+    )
+
+
 def test_describe_llm_failure_returns_502(client):
     # raw non-JSON content -> the real complete_json raises LlmResponseError
     _override_llm(client, "definitely not json")
