@@ -40,3 +40,15 @@ build/
 .idea/
 .vscode/
 *.swp
+
+# Local development tooling and agent config (not part of the published project)
+.agents/
+.claude/
+.codex/
+.ori/
+.serena/
+scratch/
+mcp.json
+
+# Local user data (personal search criteria; see criteria.example.yml)
+criteria.yml
