@@ -1,11 +1,17 @@
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { AppShell } from "@/components/shell/AppShell"
 import { NAV_ITEMS } from "@/components/shell/nav"
+import { api } from "@/lib/api"
+import type { SettingsResponse } from "@/pages/settings/types"
+
+vi.mock("@/lib/api", () => ({ api: vi.fn() }))
+
+const mockedApi = vi.mocked(api)
 
 /**
  * The shell is the frame every page is read inside: seven icon+label entries,
@@ -26,7 +32,19 @@ const SECTIONS = [
 
 const SIDEBAR_KEY = "huntloop-sidebar"
 
-function renderShell(path: string) {
+const CONFIGURED_SETTINGS: SettingsResponse = {
+  api_access: {
+    base_url: "https://api.openai.com/v1",
+    has_api_key: true,
+    api_key_reentry_required: false,
+  },
+  models: { triage: "gpt-4o-mini", scoring: "gpt-4o", extraction: "gpt-4o" },
+  schedule: { run_at: "08:00", timezone: "UTC" },
+  spend_cap: { cap_usd: null },
+}
+
+function renderShell(path: string, settings = CONFIGURED_SETTINGS) {
+  mockedApi.mockResolvedValue(settings)
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -55,7 +73,7 @@ function renderShell(path: string) {
       </QueryClientProvider>
     </ThemeProvider>
   )
-  return { router, ...view }
+  return { client, router, ...view }
 }
 
 const primaryNav = () => screen.getByRole("navigation", { name: "Primary" })
@@ -171,6 +189,60 @@ describe("AppShell mobile drawer", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
     expect(router.state.location.pathname).toBe("/runs")
+  })
+})
+
+describe("AppShell API access banner", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.localStorage.clear()
+  })
+
+  it("shows missing API access without blocking the current page", async () => {
+    renderShell("/", {
+      ...CONFIGURED_SETTINGS,
+      api_access: {
+        ...CONFIGURED_SETTINGS.api_access,
+        has_api_key: false,
+      },
+    })
+
+    expect(screen.getByText("dashboard content")).toBeInTheDocument()
+    expect(
+      await screen.findByText(/LLM API access is not configured/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("link", { name: "Configure API access" })
+    ).toHaveAttribute("href", "/settings")
+  })
+
+  it("stays hidden when API access is usable", async () => {
+    renderShell("/")
+
+    await waitFor(() => expect(mockedApi).toHaveBeenCalledWith("/api/settings"))
+    expect(
+      screen.queryByRole("link", { name: "Configure API access" })
+    ).not.toBeInTheDocument()
+  })
+
+  it("disappears as soon as the shared settings cache is updated", async () => {
+    const missingSettings: SettingsResponse = {
+      ...CONFIGURED_SETTINGS,
+      api_access: {
+        ...CONFIGURED_SETTINGS.api_access,
+        has_api_key: false,
+      },
+    }
+    const { client } = renderShell("/", missingSettings)
+    await screen.findByRole("link", { name: "Configure API access" })
+
+    act(() => client.setQueryData(["settings"], CONFIGURED_SETTINGS))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Configure API access" })
+      ).not.toBeInTheDocument()
+    )
   })
 })
 
