@@ -1,12 +1,13 @@
 import type { ReactElement } from "react"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { api, apiPost } from "@/lib/api"
+import { api, apiPost, ApiError } from "@/lib/api"
 import Criteria from "../Criteria"
 import { CoverageCard } from "./CoverageCard"
+import { DescribeStep } from "./DescribeStep"
 import { EmployerProposalsStep } from "./EmployerProposalsStep"
 
 vi.mock("@/lib/api", () => {
@@ -106,6 +107,73 @@ function renderWithProviders(ui: ReactElement) {
     </QueryClientProvider>
   )
 }
+
+describe("DescribeStep", () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it("directs missing API configuration to Settings", async () => {
+    const user = userEvent.setup()
+    mockedApiPost.mockRejectedValueOnce(
+      new ApiError(503, "LLM API access is not configured.")
+    )
+    renderWithProviders(<DescribeStep onSuggested={vi.fn()} />)
+
+    const textarea = screen.getByLabelText("Your description")
+    await user.type(textarea, "Senior backend role")
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "LLM API access is not configured."
+    )
+    expect(textarea).toHaveAttribute("aria-invalid", "true")
+    expect(textarea).toHaveAttribute(
+      "aria-describedby",
+      "criteria-description-error"
+    )
+    expect(
+      screen.getByRole("button", { name: "Configure API access" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Try again" })
+    ).not.toBeInTheDocument()
+  })
+
+  it("keeps provider failures retryable", async () => {
+    const user = userEvent.setup()
+    mockedApiPost.mockRejectedValueOnce(new ApiError(502, "Provider unavailable"))
+    renderWithProviders(<DescribeStep onSuggested={vi.fn()} />)
+
+    await user.type(screen.getByLabelText("Your description"), "Senior backend role")
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+
+    expect(
+      await screen.findByRole("button", { name: "Try again" })
+    ).toBeInTheDocument()
+  })
+
+  it("blocks duplicate submissions while a request is pending", async () => {
+    let resolveRequest!: (value: { suggested: typeof SUGGESTED }) => void
+    mockedApiPost.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRequest = resolve
+      })
+    )
+    const onSuggested = vi.fn()
+    renderWithProviders(<DescribeStep onSuggested={onSuggested} />)
+
+    const textarea = screen.getByLabelText("Your description")
+    fireEvent.change(textarea, { target: { value: "Senior backend role" } })
+    const form = textarea.closest("form")
+    expect(form).not.toBeNull()
+    fireEvent.submit(form!)
+    fireEvent.submit(form!)
+
+    expect(mockedApiPost).toHaveBeenCalledTimes(1)
+    resolveRequest({ suggested: SUGGESTED })
+    expect(await screen.findByText("Continue")).toBeInTheDocument()
+    expect(onSuggested).toHaveBeenCalledWith(SUGGESTED)
+  })
+})
 
 describe("Criteria intake flow (merged page)", () => {
   beforeEach(() => {
