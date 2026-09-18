@@ -7,6 +7,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { ApiAccessBanner } from "@/components/shell/ApiAccessBanner"
 import { AppHeader } from "@/components/shell/AppHeader"
 import { AppSidebar } from "@/components/shell/AppSidebar"
 
@@ -89,6 +90,7 @@ export function AppShell({ primaryActions }: AppShellProps) {
         )}
       >
         <AppHeader primaryActions={primaryActions} />
+        <ApiAccessBanner />
         <main
           id="main"
           tabIndex={-1}

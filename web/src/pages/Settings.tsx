@@ -8,6 +8,13 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { DiagnosticsPanel } from "./settings/DiagnosticsPanel"
 import { ModelSelect } from "./settings/ModelSelect"
 import { SettingsSection } from "./settings/SettingsSection"
+import type {
+  ApiAccess,
+  Models,
+  Schedule,
+  SettingsResponse,
+  SpendCap,
+} from "./settings/types"
 
 /**
  * D-15 / UI-04: settings is one page with four independently-saveable sections
@@ -16,34 +23,10 @@ import { SettingsSection } from "./settings/SettingsSection"
  * requires editing a file or touching a terminal.
  */
 
-interface ApiAccess {
-  base_url: string
-  has_api_key: boolean
-  api_key_reentry_required: boolean
-}
-interface Models {
-  triage: string
-  scoring: string
-  extraction: string
-}
-interface Schedule {
-  run_at: string
-  timezone: string
-}
-interface SpendCap {
-  cap_usd: number | null
-}
 interface AvailableModels {
   models: string[]
   source: "provider" | "fallback"
 }
-interface SettingsResponse {
-  api_access: ApiAccess
-  models: Models
-  schedule: Schedule
-  spend_cap: SpendCap
-}
-
 interface ApiAccessForm {
   base_url: string
   api_key: string

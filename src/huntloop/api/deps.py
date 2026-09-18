@@ -12,10 +12,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from huntloop.config import ConfigError
 from huntloop.credentials.base import (
     get_credentials_engine,
     make_credentials_session_factory,
@@ -100,4 +101,10 @@ def get_llm(
     `app.dependency_overrides[get_llm]`, exactly like the session
     dependencies above.
     """
-    return get_llm_client(credentials_session)
+    try:
+        return get_llm_client(credentials_session)
+    except ConfigError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM API access is not configured. Add an API key in Settings → API access.",
+        ) from exc
