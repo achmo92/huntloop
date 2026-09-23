@@ -283,14 +283,21 @@ def resolve_batch(
     any thread starts and before the 202, so a refresh mid-probe reads
     ``resolving`` rather than the old two-value status.
     """
-    for company_id in body.ids:
-        company = session.get(Company, company_id)
-        if company is not None:
-            company.ats_config = mark_resolving(company.ats_config)
+    companies = (
+        session.execute(
+            select(Company).where(
+                Company.id.in_(body.ids), Company.enabled.is_(True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for company in companies:
+        company.ats_config = mark_resolving(company.ats_config)
     session.commit()
-    for company_id in body.ids:
-        run_in_background(resolve_company_in_background, company_id)
-    return ResolveBatchResult(queued=len(body.ids))
+    for company in companies:
+        run_in_background(resolve_company_in_background, company.id)
+    return ResolveBatchResult(queued=len(companies))
 
 
 @router.get("/coverage", response_model=CoverageOut)
@@ -298,18 +305,21 @@ def coverage(session: Session = Depends(get_session)) -> CoverageOut:
     """D-06's honest headline numbers — no client-side math.
 
     ``watchable`` counts only resolved AND enabled employers (what will
-    actually be watched); ``needs_attention`` is every added employer whose
-    resolution has not succeeded. The UI renders "we'd watch N of your M added
-    employers" directly from these fields.
+    actually be watched); ``needs_attention`` counts only enabled employers
+    whose resolution has not succeeded. Disabled employers stay in ``added``
+    for registry history but never trigger resolution work.
     """
     companies = session.execute(select(Company)).scalars().all()
     added = len(companies)
     resolved = sum(1 for c in companies if c.resolved_at is not None)
     watchable = sum(1 for c in companies if c.resolved_at is not None and c.enabled)
+    needs_attention = sum(
+        1 for c in companies if c.resolved_at is None and c.enabled
+    )
     return CoverageOut(
         added=added,
         watchable=watchable,
-        needs_attention=added - resolved,
+        needs_attention=needs_attention,
         resolved=resolved,
     )
 
@@ -387,6 +397,11 @@ def resolve_company(
     company = session.get(Company, company_id)
     if company is None:
         raise HTTPException(status_code=404, detail=f"company {company_id} not found")
+    if not company.enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Enable this employer before retrying job board resolution.",
+        )
     company.ats_config = mark_resolving(company.ats_config)
     session.commit()
     run_in_background(resolve_company_in_background, company_id)

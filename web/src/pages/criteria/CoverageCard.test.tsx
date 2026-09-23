@@ -125,6 +125,33 @@ describe("CoverageCard retry action (GAP-7)", () => {
     )
   })
 
+  it("excludes disabled employers from the panel and retry batch", async () => {
+    const user = userEvent.setup()
+    const disabled: CompanyOut = {
+      ...GLOBEX,
+      id: "3",
+      name: "Disabled Co",
+      enabled: false,
+    }
+    mockCoverage([GLOBEX, disabled, ACME], {
+      added: 3,
+      watchable: 1,
+      needs_attention: 1,
+      resolved: 1,
+    })
+    mockedApiPost.mockResolvedValue(undefined)
+    renderCard(makeClient())
+
+    expect(await screen.findByText("Globex")).toBeInTheDocument()
+    expect(screen.queryByText("Disabled Co")).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /retry all/i }))
+
+    expect(mockedApiPost).toHaveBeenCalledWith(
+      "/api/companies/resolve-batch",
+      { ids: ["1"] }
+    )
+  })
+
   it("excludes an employer already resolving from the retry-all list", async () => {
     const user = userEvent.setup()
     const resolving: CompanyOut = {

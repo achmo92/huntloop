@@ -590,6 +590,70 @@ def test_resolve_batch_sets_resolving_marker_for_each(
     assert rows["Globex"].get("resolution_state") == "resolving"
 
 
+def test_resolve_batch_skips_disabled_employers(
+    client, make_session, monkeypatch
+):
+    session = make_session()
+    try:
+        enabled = _mk_company(session, "Acme", enabled=True)
+        disabled = _mk_company(session, "Globex", enabled=False)
+        ids = [enabled.id, disabled.id]
+        session.commit()
+    finally:
+        session.close()
+
+    queued = []
+    monkeypatch.setattr(
+        "huntloop.api.routers.companies.run_in_background",
+        lambda _fn, company_id: queued.append(company_id),
+    )
+
+    resp = client.post(
+        "/api/companies/resolve-batch", json={"ids": [str(i) for i in ids]}
+    )
+
+    assert resp.status_code == 202
+    assert resp.json() == {"queued": 1}
+    assert queued == [enabled.id]
+    rows = {row["name"]: row for row in client.get("/api/companies").json()}
+    assert rows["Acme"]["resolution_state"] == "resolving"
+    assert rows["Globex"]["resolution_state"] == "added"
+
+
+def test_resolve_rejects_disabled_employer(client, make_session):
+    session = make_session()
+    try:
+        company = _mk_company(session, "Globex", enabled=False)
+        company_id = company.id
+        session.commit()
+    finally:
+        session.close()
+
+    resp = client.post(f"/api/companies/{company_id}/resolve")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == (
+        "Enable this employer before retrying job board resolution."
+    )
+
+
+def test_coverage_excludes_disabled_employers_from_attention_count(
+    client, make_session
+):
+    session = make_session()
+    try:
+        _mk_company(session, "Enabled pending", enabled=True)
+        _mk_company(session, "Disabled pending", enabled=False)
+        session.commit()
+    finally:
+        session.close()
+
+    coverage = client.get("/api/companies/coverage").json()
+
+    assert coverage["added"] == 2
+    assert coverage["needs_attention"] == 1
+
+
 def test_resolve_completion_replaces_marker_with_resolved_state(
     client, make_session, api_engine, monkeypatch
 ):

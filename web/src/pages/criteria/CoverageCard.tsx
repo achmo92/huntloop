@@ -104,7 +104,10 @@ export function CoverageCard() {
     resolved: 0,
   }
   const needingAttention = (companiesQuery.data ?? []).filter(
-    (company) => !company.resolved && company.resolution_state !== "resolving"
+    (company) =>
+      company.enabled &&
+      !company.resolved &&
+      company.resolution_state !== "resolving"
   )
   const inFlight = deriveInFlight(queuedRows, companiesQuery.data ?? [])
   const isRetryingAll = queue.isPending || Object.keys(inFlight).length > 0
