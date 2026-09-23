@@ -103,6 +103,26 @@ HUNTLOOP_SCORING_MODEL=codex
 HUNTLOOP_EXTRACTION_MODEL=codex
 ```
 
+Connection settings:
+
+| Setting | Purpose |
+| --- | --- |
+| `HUNTLOOP_LLM_PROVIDER=codex_gateway` | Activates the explicit Codex client boundary. The default `openai` path remains unchanged when this is absent. |
+| `HUNTLOOP_OPENAI_BASE_URL=http://host.docker.internal:8787/v1` | Routes every model request from the Docker containers to the gateway running on host port 8787. |
+| `HUNTLOOP_OPENAI_API_KEY=<gateway key>` | Authenticates HuntLoop to the local gateway. This is the generated `CODEX_GATEWAY_KEY`, not an OpenAI platform key. A key saved in Settings takes precedence. |
+| `HUNTLOOP_ALLOW_PRIVATE_ENDPOINT=1` | Explicitly permits the private HTTP gateway URL. Without it, Settings rejects local endpoints to prevent accidental credential forwarding. |
+
+Model settings:
+
+| Setting | Purpose |
+| --- | --- |
+| `HUNTLOOP_TRIAGE_MODEL=codex` | Uses the Codex CLI default model for the cheap keep/drop stage. |
+| `HUNTLOOP_SCORING_MODEL=codex` | Uses the Codex CLI default model for detailed dimension scoring. |
+| `HUNTLOOP_EXTRACTION_MODEL=codex` | Uses the Codex CLI default model for criteria and careers-page extraction. |
+
+The `codex` value is a gateway alias. The gateway omits `codex exec --model`, allowing
+the authenticated CLI configuration to select its default model.
+
 ```bash
 docker compose up -d --force-recreate web scheduler
 ```

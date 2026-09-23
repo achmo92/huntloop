@@ -29,7 +29,12 @@ class Config:
     database_url: str
     credentials_database_url: str
     secret_key: str
+    # Shared OpenAI-compatible transport URL. For codex_gateway this points
+    # from Docker to the host-side compatibility service.
     openai_base_url: str
+    # Explicit boundary selector; never inferred from a URL, key, or model.
+    # `openai` preserves the standard path, `codex_gateway` enables only
+    # Codex-owned behavior on CodexGatewayClient.
     llm_provider: str
     triage_model: str
     scoring_model: str
