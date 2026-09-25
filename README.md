@@ -79,6 +79,70 @@ A base URL must be `https://` and resolve to a public address, because the store
 is sent there; private/loopback endpoints (e.g. a local Ollama) require opting in with
 `HUNTLOOP_ALLOW_PRIVATE_ENDPOINT=1` on a network you control.
 
+### Use Codex OAuth through a local gateway
+
+The optional gateway lets HuntLoop use your authenticated Codex CLI without reading or
+copying its OAuth credentials. Install the official Codex CLI, run `codex login`, then
+start the gateway on the host:
+
+```bash
+export CODEX_GATEWAY_KEY="$(openssl rand -hex 32)"
+uv run uvicorn huntloop.codex_gateway:app --host 127.0.0.1 --port 8787
+```
+
+Set these values in `.env`, restart HuntLoop, then save the same gateway key and base
+URL in **Settings → API access**. The saved Settings key takes precedence over `.env`.
+
+```env
+HUNTLOOP_LLM_PROVIDER=codex_gateway
+HUNTLOOP_OPENAI_BASE_URL=http://host.docker.internal:8787/v1
+HUNTLOOP_OPENAI_API_KEY=<same CODEX_GATEWAY_KEY>
+HUNTLOOP_ALLOW_PRIVATE_ENDPOINT=1
+HUNTLOOP_TRIAGE_MODEL=codex
+HUNTLOOP_SCORING_MODEL=codex
+HUNTLOOP_EXTRACTION_MODEL=codex
+```
+
+Connection settings:
+
+| Setting | Purpose |
+| --- | --- |
+| `HUNTLOOP_LLM_PROVIDER=codex_gateway` | Activates the explicit Codex client boundary. The default `openai` path remains unchanged when this is absent. |
+| `HUNTLOOP_OPENAI_BASE_URL=http://host.docker.internal:8787/v1` | Routes every model request from the Docker containers to the gateway running on host port 8787. |
+| `HUNTLOOP_OPENAI_API_KEY=<gateway key>` | Authenticates HuntLoop to the local gateway. This is the generated `CODEX_GATEWAY_KEY`, not an OpenAI platform key. A key saved in Settings takes precedence. |
+| `HUNTLOOP_ALLOW_PRIVATE_ENDPOINT=1` | Explicitly permits the private HTTP gateway URL. Without it, Settings rejects local endpoints to prevent accidental credential forwarding. |
+
+Model settings:
+
+| Setting | Purpose |
+| --- | --- |
+| `HUNTLOOP_TRIAGE_MODEL=codex` | Uses the Codex CLI default model for the cheap keep/drop stage. |
+| `HUNTLOOP_SCORING_MODEL=codex` | Uses the Codex CLI default model for detailed dimension scoring. |
+| `HUNTLOOP_EXTRACTION_MODEL=codex` | Uses the Codex CLI default model for criteria and careers-page extraction. |
+
+The `codex` value is a gateway alias. The gateway omits `codex exec --model`, allowing
+the authenticated CLI configuration to select its default model.
+
+```bash
+docker compose up -d --force-recreate web scheduler
+```
+
+The `codex` model alias uses the CLI's default model. To expose explicit model names,
+set `CODEX_GATEWAY_MODELS` on the host to a comma-separated list. Before using the
+gateway, confirm the container can reach it:
+
+```bash
+docker compose exec web python -c \
+  'import urllib.request as u; r=u.Request("http://host.docker.internal:8787/v1/models", headers={"Authorization":"Bearer <same CODEX_GATEWAY_KEY>"}); print(u.urlopen(r).status)'
+```
+
+If OrbStack cannot reach a loopback-bound service, bind the gateway to the host's
+private interface and protect it with the generated gateway key. Codex-backed models
+are reported as unpriced unless they exist in HuntLoop's static pricing table, so a
+USD spend cap cannot enforce their subscription usage. Each request starts a Codex agent
+session and carries substantial agent-context overhead; use this gateway for local
+experimentation, not high-volume listing runs.
+
 ## The browser interface
 
 Seven sections, all reachable from the left nav:

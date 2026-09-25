@@ -29,7 +29,13 @@ class Config:
     database_url: str
     credentials_database_url: str
     secret_key: str
+    # Shared OpenAI-compatible transport URL. For codex_gateway this points
+    # from Docker to the host-side compatibility service.
     openai_base_url: str
+    # Explicit boundary selector; never inferred from a URL, key, or model.
+    # `openai` preserves the standard path, `codex_gateway` enables only
+    # Codex-owned behavior on CodexGatewayClient.
+    llm_provider: str
     triage_model: str
     scoring_model: str
     extraction_model: str
@@ -220,6 +226,12 @@ def load_config() -> Config:
             f"endpoint (OPS-06). Got: {openai_base_url!r}"
         )
 
+    llm_provider = (os.environ.get("HUNTLOOP_LLM_PROVIDER") or "openai").strip().lower()
+    if llm_provider not in {"openai", "codex_gateway"}:
+        raise ConfigError(
+            f"HUNTLOOP_LLM_PROVIDER must be 'openai' or 'codex_gateway'. Got: {llm_provider!r}"
+        )
+
     triage_model = os.environ.get("HUNTLOOP_TRIAGE_MODEL") or "gpt-4o-mini"
     scoring_model = os.environ.get("HUNTLOOP_SCORING_MODEL") or "gpt-4o"
     extraction_model = os.environ.get("HUNTLOOP_EXTRACTION_MODEL") or triage_model
@@ -245,6 +257,7 @@ def load_config() -> Config:
         credentials_database_url=credentials_database_url,
         secret_key=secret_key,
         openai_base_url=openai_base_url,
+        llm_provider=llm_provider,
         triage_model=triage_model,
         scoring_model=scoring_model,
         extraction_model=extraction_model,
