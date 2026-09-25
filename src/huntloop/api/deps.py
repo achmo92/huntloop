@@ -93,9 +93,9 @@ def get_llm(
 ) -> Any:
     """Return the LLM client for this request.
 
-    An `openai.OpenAI` instance built by `huntloop.llm.client.get_llm_client`.
-    Deliberately duck-typed, NOT `-> openai.OpenAI`: OPS-06 confines the
-    openai import to huntloop/llm/client.py alone (enforced by
+    The configured provider client built by `huntloop.llm.client.get_llm_client`.
+    Deliberately duck-typed: OPS-06 confines the OpenAI transport import to
+    huntloop/llm/client.py alone (enforced by
     tests/scoring/test_client_routing.py), so this dependency stays
     import-free and tests override it with fakes via
     `app.dependency_overrides[get_llm]`, exactly like the session
