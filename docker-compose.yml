@@ -40,6 +40,12 @@ services:
   # container repairs `/data` ownership before migrate, so `docker compose up`
   # works on a fresh clone and on a pre-existing root-owned volume alike.
   init-perms:
+    # Keep the sole Compose build declaration here. All services consume the
+    # same tag, so declaring `build: .` on each one makes Compose/Bake export
+    # and unpack the large Playwright image once per service (with a distinct
+    # provenance manifest each time). Compose completes builds before creating
+    # containers, so the dependent services below can safely reference the
+    # image without their own build declaration.
     build: .
     image: huntloop:local
     user: "0:0"
@@ -49,7 +55,6 @@ services:
     restart: "no"
 
   migrate:
-    build: .
     image: huntloop:local
     depends_on:
       init-perms:
@@ -64,7 +69,6 @@ services:
     restart: "no"
 
   probe:
-    build: .
     image: huntloop:local
     profiles: ["dev"]
     depends_on:
@@ -79,7 +83,6 @@ services:
   # The entrypoint is the CLI, the command is the default subcommand, so
   # `docker compose run --rm app <subcommand>` reads naturally.
   app:
-    build: .
     image: huntloop:local
     depends_on:
       migrate:
@@ -98,7 +101,6 @@ services:
   # No browser, no display, no X server (OPS-02) -- the scheduler never renders;
   # the crawl path inside a run launches Chromium headless, as Phase 2 already does.
   scheduler:
-    build: .
     image: huntloop:local
     depends_on:
       migrate:
@@ -119,7 +121,6 @@ services:
   # (STACK.md). The private-network trust model means binding 0.0.0.0 is the
   # point — any device on the host's network reaches it, with no auth ceremony.
   web:
-    build: .
     image: huntloop:local
     depends_on:
       migrate:
