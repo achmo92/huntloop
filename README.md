@@ -18,8 +18,8 @@ editing is required for day-to-day use; the CLI remains the builder/operator har
   Docker Desktop on macOS/Windows, or Docker Engine + Compose on Linux.
 - **Network access** to an OpenAI-compatible LLM endpoint for scoring, criteria
   extraction, and proposal rationales (the free `--no-score` CLI pass needs no key).
-- A few GB of free disk: the image bundles Chromium for the crawler fallback, so the
-  first `docker compose up` build takes a few minutes.
+- A few GB of free disk: the image bundles Chromium's headless shell for the crawler
+  fallback, so the first `docker compose up` build can take a few minutes.
 
 ## Setup
 

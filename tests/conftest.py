@@ -27,8 +27,16 @@ def data_dir(tmp_path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch, data_dir, fernet_key):
+    # Tests control configuration through monkeypatch; never merge a developer's
+    # deployment .env into that hermetic environment.
+    monkeypatch.setattr("huntloop.config.dotenv.load_dotenv", lambda *a, **k: False)
     monkeypatch.setenv("HUNTLOOP_DATA_DIR", str(data_dir))
     monkeypatch.setenv("HUNTLOOP_SECRET_KEY", fernet_key)
+    # Keep TestClient's conventional host deterministic even when a developer's
+    # local .env intentionally narrows the production Host allowlist.
+    monkeypatch.setenv(
+        "HUNTLOOP_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver"
+    )
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("CREDENTIALS_DATABASE_URL", raising=False)
     reset_engine_cache()

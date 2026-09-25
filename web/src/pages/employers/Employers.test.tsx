@@ -101,6 +101,22 @@ const STALE: CompanyOut = {
   consecutive_empty_runs: 5,
 }
 
+describe("Employers page", () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it("shows a recoverable error instead of dependent registry panels", async () => {
+    mockedApi.mockRejectedValue(new Error("offline"))
+
+    renderWithProviders(<Employers />)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "We couldn't load your employers"
+    )
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument()
+    expect(screen.queryByText("Coverage")).not.toBeInTheDocument()
+  })
+})
+
 function renderWithProviders(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },

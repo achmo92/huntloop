@@ -50,13 +50,23 @@ def test_resolve_batch_ids_over_cap_is_422(client, monkeypatch):
     assert resp.status_code == 422
 
 
-def test_resolve_batch_ids_at_cap_is_202(client, monkeypatch):
+def test_resolve_batch_ids_at_cap_is_202(client, make_session, monkeypatch):
     monkeypatch.setattr(
         "huntloop.api.routers.companies.run_in_background", lambda *a, **k: None
     )
+    session = make_session()
+    try:
+        companies = [Company(name=f"At-cap employer {i}") for i in range(100)]
+        session.add_all(companies)
+        session.flush()
+        ids = [str(company.id) for company in companies]
+        session.commit()
+    finally:
+        session.close()
+
     resp = client.post(
         "/api/companies/resolve-batch",
-        json={"ids": [str(uuid.uuid4()) for _ in range(100)]},
+        json={"ids": ids},
     )
     assert resp.status_code == 202
     assert resp.json() == {"queued": 100}

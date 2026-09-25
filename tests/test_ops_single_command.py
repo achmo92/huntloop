@@ -59,6 +59,22 @@ def test_single_command_starts_full_stack():
     assert {"migrate", "scheduler", "web"} <= services
 
 
+def test_shared_image_is_built_once():
+    """Avoid one BuildKit export/unpack of the browser image per service."""
+    services = _compose()["services"]
+    image_users = {
+        name: service
+        for name, service in services.items()
+        if service.get("image") == "huntloop:local"
+    }
+
+    assert image_users
+    assert [name for name, service in image_users.items() if "build" in service] == [
+        "init-perms"
+    ]
+    assert all(service.get("image") == "huntloop:local" for service in image_users.values())
+
+
 def test_web_service_single_worker():
     """STACK.md: multi-worker + in-process scheduler duplicates runs silently."""
     command = _compose()["services"]["web"]["command"]
