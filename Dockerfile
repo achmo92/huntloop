@@ -3,7 +3,7 @@
 # Stage 1: build the React SPA (plan 04-11). Kept separate so the Python
 # runtime stage never carries node_modules or the Node toolchain, and so source
 # edits don't invalidate the npm layer unless package.json/package-lock.json change.
-FROM node:22-slim AS webbuild
+FROM node:26-bookworm-slim AS webbuild
 
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
