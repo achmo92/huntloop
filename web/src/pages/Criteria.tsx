@@ -92,6 +92,30 @@ export default function Criteria() {
     )
   }
 
+  if (criteriaQuery.isError) {
+    return (
+      <div className="mx-auto grid max-w-3xl gap-8">
+        <PageHeader
+          title="Your criteria"
+          description="We couldn't load your saved search."
+        />
+        <div role="alert" className="grid justify-items-start gap-3 text-sm">
+          <p className="text-destructive">
+            Your criteria are still saved. Try loading them again before making
+            changes.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void criteriaQuery.refetch()}
+          >
+            Try again
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="mx-auto grid max-w-3xl gap-8">
       <PageHeader

@@ -162,4 +162,18 @@ describe("Criteria page", () => {
       screen.getByRole("heading", { name: "Describe what you're looking for" })
     ).toBeInTheDocument()
   })
+
+  it("does not present setup when saved criteria fail to load", async () => {
+    mockedApi.mockRejectedValue(new Error("offline"))
+
+    renderWithProviders(<Criteria />)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your criteria are still saved"
+    )
+    expect(
+      screen.queryByRole("heading", { name: "Describe what you're looking for" })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument()
+  })
 })

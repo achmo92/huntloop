@@ -34,7 +34,13 @@ export function SuggestField({
 
   const companiesQuery = useQuery({
     queryKey: ["companies"],
-    queryFn: () => api<CompanyOut[]>("/api/companies"),
+    queryFn: async () => {
+      const response = await api<unknown>("/api/companies")
+      if (!Array.isArray(response)) {
+        throw new Error("Invalid companies response")
+      }
+      return response as CompanyOut[]
+    },
   })
 
   const names = useMemo(() => {

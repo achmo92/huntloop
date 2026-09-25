@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { api } from "@/lib/api"
 import { EmptyState } from "@/components/EmptyState"
 import { PageHeader } from "@/components/PageHeader"
+import { Button } from "@/components/ui/button"
 import { SkeletonTable } from "@/components/ui/skeleton"
 import { CoverageCard } from "@/pages/criteria/CoverageCard"
 import type { CompanyOut } from "@/pages/criteria/types"
@@ -39,6 +40,19 @@ export default function Employers() {
             Loading employers…
           </span>
           <SkeletonTable />
+        </div>
+      ) : companiesQuery.isError ? (
+        <div role="alert" className="grid justify-items-start gap-3 text-sm">
+          <p className="text-destructive">
+            We couldn't load your employers. Your registry has not changed.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void companiesQuery.refetch()}
+          >
+            Try again
+          </Button>
         </div>
       ) : isEmpty ? (
         <EmptyState
