@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # Stage 1: build the React SPA (plan 04-11). Kept separate so the Python
 # runtime stage never carries node_modules or the Node toolchain, and so source
 # edits don't invalidate the npm layer unless package.json/package-lock.json change.
@@ -5,7 +7,8 @@ FROM node:22-slim AS webbuild
 
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
@@ -15,7 +18,7 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HUNTLOOP_DATA_DIR=/data
 
 WORKDIR /app
@@ -23,11 +26,16 @@ WORKDIR /app
 # Dependency metadata first so the pip layer caches across source edits.
 COPY pyproject.toml ./
 COPY src ./src
-RUN pip install --no-cache-dir ".[postgres]"
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install ".[postgres]"
 
-# --with-deps is not optional on slim: Chromium fails at launch with a bare-library error that reads like a Playwright bug. PLAYWRIGHT_BROWSERS_PATH is set explicitly because the default (~/.cache/ms-playwright) resolves to a different home directory at build time than at run time, and the resulting "executable doesn't exist" surfaces only in the container, never locally.
+# --with-deps is not optional on slim: Chromium fails at launch with a bare-library
+# error that reads like a Playwright bug. HuntLoop always launches headless=True, so
+# install Playwright's smaller headless shell rather than the full interactive browser.
+# PLAYWRIGHT_BROWSERS_PATH is explicit because the default (~/.cache/ms-playwright)
+# resolves to a different home directory at build time than at run time.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
-RUN playwright install --with-deps chromium \
+RUN playwright install --with-deps chromium --only-shell \
     && chmod -R a+rX /opt/playwright
 
 # alembic.ini's script_location values are repo-root-relative, so both the ini
@@ -35,7 +43,6 @@ RUN playwright install --with-deps chromium \
 # resolve regardless of where it is invoked from.
 COPY alembic.ini ./
 COPY migrations ./migrations
-COPY scripts ./scripts
 
 # The built SPA, at /app/web/dist — the location the `web` Compose service's
 # uvicorn process (WORKDIR /app) serves same-origin via create_app().

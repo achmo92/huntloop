@@ -1,25 +1,35 @@
 .git
+.github
+.gitignore
 .venv
 venv
+.idea
+.vscode
 __pycache__
 *.py[cod]
 *.egg-info
 .pytest_cache
 .ruff_cache
 .mypy_cache
+.coverage
+coverage.xml
+htmlcov
 data
 *.db
 *.sqlite
 *.sqlite3
+*.log
 .env
 .env.*
 !.env.example
 .planning
 docs
 tests
+scripts
 node_modules
 # Frontend build inputs/outputs: the node stage re-installs from the lockfile
 # and produces dist inside the image, so neither should enter the build context.
 web/node_modules
 web/dist
+web/coverage
 .DS_Store
